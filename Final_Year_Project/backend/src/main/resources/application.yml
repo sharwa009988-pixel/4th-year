@@ -1,0 +1,62 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: java-fullstack-interview-prep
+  
+  datasource:
+    url: ${DB_URL:jdbc:h2:mem:interview_prep_db;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE}
+    username: ${DB_USERNAME:sa}
+    password: ${DB_PASSWORD:}
+    driver-class-name: ${DB_DRIVER:org.h2.Driver}
+  
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+  ai:
+    grok:
+      base-url: ${GROK_BASE_URL:https://api.grok.x.ai}
+      endpoint: ${GROK_ENDPOINT:/v1/generate}
+      model: ${GROK_MODEL:grokxai}
+      chat:
+        temperature: ${GROK_TEMPERATURE:0.7}
+    # OpenAI (optional fallback - comment out for local-only)
+    # openai:
+    #   api-key: ${OPENAI_API_KEY:your-key-here}
+    #   chat:
+    #     options:
+    #       model: gpt-4o-mini
+    #       temperature: 0.7
+# JWT Configuration
+jwt:
+  secret: ${JWT_SECRET:}
+  expiration: 86400000 # 24 hours in milliseconds
+
+# JDoodle API Configuration
+jdoodle:
+  client-id: ${JDOODLE_CLIENT_ID:}
+  client-secret: ${JDOODLE_CLIENT_SECRET:}
+  api-url: https://api.jdoodle.com/v1/execute
+
+# CORS Configuration
+cors:
+  allowed-origins: http://localhost:5173,http://localhost:3000
+
+# App: Grok call timeout (seconds). If Grok is down/slow, fallback is used after this.
+app:
+  grok:
+    timeout-seconds: 5
+    max-retries: 1
+
+# Logging
+logging:
+  level:
+    com.interviewprep: DEBUG
+    org.springframework.security: INFO
+    org.springframework.web: INFO
