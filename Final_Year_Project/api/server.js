@@ -23,6 +23,7 @@ try {
 } catch {}
 const sessions = [];
 let questionSeq = 1;
+const mcqCorrect = new Map();
 const GROK_API_KEY = process.env.GROK_API_KEY || process.env.X_API_KEY || process.env.XAI_API_KEY || '';
 const GROK_MODEL = process.env.GROK_MODEL || 'grok-2';
 
@@ -162,12 +163,13 @@ app.post('/api/roles/select', (req, res) => {
 app.get('/api/dashboard/stats', (req, res) => {
   const saved = getUserFromAuth(req);
   if (!saved) return res.status(401).json({ message: 'Unauthorized' });
+  const mySessions = sessions.filter(x => x.userId === saved.id);
   const stats = {
     targetRole: saved.role || '',
-    totalSessions: 0,
-    sessionsThisRole: 0,
+    totalSessions: mySessions.length,
+    sessionsThisRole: mySessions.length,
     averageScore: 0,
-    recentTopics: [],
+    recentTopics: Array.from(new Set(mySessions.slice(-10).map(s => s.topic || ''))).filter(Boolean),
     strengthsWeaknesses: {
       strengths: [],
       weaknesses: []
@@ -268,8 +270,8 @@ app.post('/api/interview/question/generate', (req, res) => {
   };
   let questionText = '';
   questionText = '';
-  const sysQ = 'You are a senior technical interviewer. Generate one role-appropriate question only. If MCQ, list options each on a new line exactly formatted "A) ...", "B) ...", "C) ...", "D) ...". Do not include the correct answer. Keep it concise and job-relevant.';
-  const promptQ = `Mode: ${m}\nRole: ${saved.role || baseTopic}\nTopic: ${baseTopic}\nDifficulty: ${diff}\nGenerate exactly one question.\nFor MCQ: first line is the question stem, then four lines with options A) to D). Do not include the answer.`;
+  const sysQ = 'You are a senior technical interviewer. Generate one role-appropriate question only. If MCQ, list options each on a new line exactly formatted "A) ...", "B) ...", "C) ...", "D) ...". Do not include the correct answer. Keep it concise and job-relevant. Never repeat a previous question for the same role and topic.';
+  const promptQ = `Seed: ${id}\nMode: ${m}\nRole: ${saved.role || baseTopic}\nTopic: ${baseTopic}\nDifficulty: ${diff}\nGenerate exactly one question.\nFor MCQ: first line is the question stem, then four lines with options A) to D). Do not include the answer.`;
   if (GROK_API_KEY) {
     questionText = null;
     grokChat(sysQ, promptQ).then(content => {
@@ -280,7 +282,11 @@ app.post('/api/interview/question/generate', (req, res) => {
         let local = '';
         if (m === 'MCQ') {
           const bank = MCQ[baseTopic] || MCQ['General'];
-          local = `(${m}) [${diff}] ${baseTopic}: ${pick(bank).replace(/\\nAnswer:.*$/,'')}`;
+          const raw = pick(bank);
+          const mAns = raw.match(/Answer:\s*([A-D])/);
+          const ans = mAns ? mAns[1] : null;
+          if (ans) mcqCorrect.set(id, ans);
+          local = `(${m}) [${diff}] ${baseTopic}: ${raw.replace(/\\nAnswer:.*$/,'')}`;
         } else if (m === 'CODING') {
           const bank = CODING[baseTopic] || CODING['General'];
           local = `(${m}) [${diff}] ${baseTopic}: ${pick(bank)}`;
@@ -297,7 +303,11 @@ app.post('/api/interview/question/generate', (req, res) => {
   } else {
     if (m === 'MCQ') {
       const bank = MCQ[baseTopic] || MCQ['General'];
-      questionText = `(${m}) [${diff}] ${baseTopic}: ${pick(bank).replace(/\\nAnswer:.*$/,'')}`;
+      const raw = pick(bank);
+      const mAns = raw.match(/Answer:\s*([A-D])/);
+      const ans = mAns ? mAns[1] : null;
+      if (ans) mcqCorrect.set(id, ans);
+      questionText = `(${m}) [${diff}] ${baseTopic}: ${raw.replace(/\\nAnswer:.*$/,'')}`;
     } else if (m === 'CODING') {
       const bank = CODING[baseTopic] || CODING['General'];
       questionText = `(${m}) [${diff}] ${baseTopic}: ${pick(bank)}`;
@@ -344,15 +354,30 @@ app.post('/api/interview/evaluate', (req, res) => {
       });
     });
   } else {
-    const hasContent = userAnswer && userAnswer.trim().length > 20;
-    const score = hasContent ? 70 : 40;
-    res.json({
-      feedback: hasContent ? 'Good structure. Add more specifics and examples.' : 'Answer is too brief. Elaborate key points and examples.',
-      score,
-      isCorrect: hasContent,
-      correctAnswer: 'Explain fundamentals, typical patterns, and pitfalls with examples.',
-      reason: 'Assessed clarity, completeness, and relevance to the topic.'
-    });
+    const m = (mode && mode.trim()) ? mode.trim().toUpperCase() : 'SUBJECTIVE';
+    if (m === 'MCQ') {
+      const key = typeof req.body.questionId === 'number' ? req.body.questionId : null;
+      const correct = key ? mcqCorrect.get(key) : null;
+      const ua = String(userAnswer || '').trim().toUpperCase();
+      const isCorrect = !!correct && ua === correct;
+      res.json({
+        feedback: isCorrect ? 'Correct choice.' : 'Incorrect choice.',
+        score: isCorrect ? 100 : 0,
+        isCorrect,
+        correctAnswer: correct || '',
+        reason: isCorrect ? '' : 'Fallback evaluation based on known key.'
+      });
+    } else {
+      const hasContent = userAnswer && userAnswer.trim().length > 20;
+      const score = hasContent ? 70 : 40;
+      res.json({
+        feedback: hasContent ? 'Good structure. Add more specifics and examples.' : 'Answer is too brief. Elaborate key points and examples.',
+        score,
+        isCorrect: hasContent,
+        correctAnswer: 'Explain fundamentals, typical patterns, and pitfalls with examples.',
+        reason: 'Assessed clarity, completeness, and relevance to the topic.'
+      });
+    }
   }
 });
 
