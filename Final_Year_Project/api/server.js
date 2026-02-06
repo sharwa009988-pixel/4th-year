@@ -5,11 +5,22 @@ if (!fetchFn) {
   try { fetchFn = require('node-fetch'); } catch {}
 }
 
+const fs = require('fs');
+const path = require('path');
+const USERS_DB_PATH = path.join(__dirname, 'users.json');
+
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const users = [];
+let users = [];
+try {
+  if (fs.existsSync(USERS_DB_PATH)) {
+    const raw = fs.readFileSync(USERS_DB_PATH, 'utf-8');
+    const parsed = JSON.parse(raw || '[]');
+    if (Array.isArray(parsed)) users = parsed;
+  }
+} catch {}
 const sessions = [];
 let questionSeq = 1;
 const GROK_API_KEY = process.env.GROK_API_KEY || process.env.X_API_KEY || process.env.XAI_API_KEY || '';
@@ -75,7 +86,7 @@ app.post('/api/auth/register', (req, res, next) => {
 
     const user = { id: users.length + 1, name, email, roleSelected: false, role: '' };
     users.push({ ...user, password });
-    console.log('Registered:', user);
+    try { fs.writeFileSync(USERS_DB_PATH, JSON.stringify(users, null, 2)); } catch {}
     res.status(201).json({
       token: `dev-token-${user.id}`,
       email: user.email,
@@ -144,6 +155,7 @@ app.post('/api/roles/select', (req, res) => {
   if (!role || !role.trim()) return res.status(400).json({ message: 'Role is required' });
   saved.role = role.trim();
   saved.roleSelected = true;
+  try { fs.writeFileSync(USERS_DB_PATH, JSON.stringify(users, null, 2)); } catch {}
   res.json({ message: 'Role selected', role: saved.role });
 });
 
