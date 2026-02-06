@@ -1,5 +1,9 @@
 const express = require('express');
 const cors = require('cors');
+let fetchFn = typeof fetch === 'function' ? fetch : null;
+if (!fetchFn) {
+  try { fetchFn = require('node-fetch'); } catch {}
+}
 
 const app = express();
 app.use(cors());
@@ -14,7 +18,7 @@ const GROK_MODEL = process.env.GROK_MODEL || 'grok-2';
 async function grokChat(system, user) {
   if (!GROK_API_KEY) return null;
   try {
-    const resp = await fetch('https://api.x.ai/v1/chat/completions', {
+    const resp = await fetchFn('https://api.x.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -299,8 +303,8 @@ app.post('/api/interview/evaluate', (req, res) => {
   const { userAnswer, questionText, mode, topic, difficulty } = req.body || {};
   if (GROK_API_KEY) {
     const m = (mode && mode.trim()) ? mode.trim().toUpperCase() : 'SUBJECTIVE';
-    const sysE = 'You are a senior interviewer. Evaluate the candidate answer. Return JSON only: {"feedback": string, "score": number, "isCorrect": boolean, "correctAnswer": string, "reason": string}. For MCQ, "correctAnswer" must be the correct option letter (A-D) and "reason" must explain why that option is correct. For SUBJECTIVE, "correctAnswer" must be a concise 3-5 line expected answer.';
-    const promptE = `Mode: ${m}\nDifficulty: ${(difficulty||'MEDIUM')}\nQuestion: ${questionText}\nCandidate answer: ${userAnswer}\nProvide JSON only. Score 0-100.`;
+    const sysE = 'You are a senior interviewer. Evaluate the candidate answer. Return JSON only: {"feedback": string, "score": number, "isCorrect": boolean, "correctAnswer": string, "reason": string}. For MCQ, "correctAnswer" must be the correct option letter (A-D) and "reason" must explain briefly why that option is correct. For SUBJECTIVE, "correctAnswer" must be a concise 3-5 line ideal answer in plain text, not instructions.';
+    const promptE = `Mode: ${m}\nDifficulty: ${(difficulty||'MEDIUM')}\nQuestion: ${questionText}\nCandidate answer: ${userAnswer}\nProvide JSON only. Score 0-100. Make "correctAnswer" the actual expected answer text (3-5 lines) for SUBJECTIVE.`;
     grokChat(sysE, promptE).then(content => {
       const parsed = parseJsonSafe(content);
       if (parsed && typeof parsed === 'object') {
@@ -427,7 +431,7 @@ app.post('/api/code/execute', async (req, res) => {
     return res.json({ output: '', error: 'JDoodle credentials not configured' });
   }
   try {
-    const resp = await fetch('https://api.jdoodle.com/v1/execute', {
+    const resp = await fetchFn('https://api.jdoodle.com/v1/execute', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
