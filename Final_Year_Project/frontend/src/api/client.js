@@ -16,6 +16,18 @@ const axiosApi = axios.create({
   }
 });
 
+// Attach Authorization header from localStorage token
+axiosApi.interceptors.request.use((config) => {
+  try {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    if (token) {
+      config.headers = config.headers || {};
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+  } catch {}
+  return config;
+});
+
 /* =============================
    COMMON RESPONSE HANDLER
 ============================= */
