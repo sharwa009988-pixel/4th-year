@@ -389,24 +389,24 @@ app.post('/api/interview/evaluate-code', (req, res) => {
   if (!saved) return res.status(401).json({ message: 'Unauthorized' });
   const { code, problemStatement, executionOutput } = req.body || {};
   if (GROK_API_KEY) {
-    const sysEC = 'You are a senior interviewer. Evaluate submitted Java code for the given problem. Return JSON only: {"feedback": string, "score": number, "isCorrect": boolean, "correctAnswer": string, "reason": string}. "correctAnswer" should briefly describe the ideal approach and key steps.';
-    const promptEC = `Problem: ${problemStatement}\nCode:\n${code}\nProgram output:\n${executionOutput || ''}\nProvide JSON only. Score 0-100.`;
+    const sysEC = 'You are a senior interviewer. Evaluate submitted Java code for the given problem. Return JSON only: {"feedback": string, "score": number, "isCorrect": boolean, "correctAnswer": string}. "correctAnswer" should briefly describe the ideal approach and key steps. Do not include a "reason" field.';
+    const promptEC = `Problem: ${problemStatement}\nCode:\n${code}\nProgram output:\n${executionOutput || ''}\nProvide JSON only. Score 0-100. Do not include "reason".`;
     grokChat(sysEC, promptEC).then(content => {
       const parsed = parseJsonSafe(content);
-      if (parsed && typeof parsed === 'object') res.json(parsed);
+      if (parsed && typeof parsed === 'object') res.json({ ...parsed, reason: '' });
       else res.json({
-        feedback: 'Review data structures, complexity, and edge cases.',
+        feedback: 'Focus on algorithmic approach, complexity, and clean code.',
         score: 60,
         isCorrect: false,
-        correctAnswer: 'Use appropriate structures and handle constraints thoroughly.',
-        reason: 'Fallback heuristic.'
+        correctAnswer: 'Use appropriate data structures and handle constraints thoroughly.',
+        reason: ''
       });
     }).catch(() => res.json({
-      feedback: 'Review data structures, complexity, and edge cases.',
+      feedback: 'Focus on algorithmic approach, complexity, and clean code.',
       score: 60,
       isCorrect: false,
-      correctAnswer: 'Use appropriate structures and handle constraints thoroughly.',
-      reason: 'Evaluation error.'
+      correctAnswer: 'Use appropriate data structures and handle constraints thoroughly.',
+      reason: ''
     }));
   } else {
     const ok = code && code.includes('class') && code.includes('get') && code.includes('put');
@@ -415,7 +415,7 @@ app.post('/api/interview/evaluate-code', (req, res) => {
       score: ok ? 75 : 45,
       isCorrect: ok,
       correctAnswer: 'Use HashMap + Doubly Linked List to achieve O(1).',
-      reason: 'Checks data structures used and operation complexity.'
+      reason: ''
     });
   }
 });

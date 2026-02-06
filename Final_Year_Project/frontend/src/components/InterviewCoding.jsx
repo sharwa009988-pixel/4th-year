@@ -157,9 +157,6 @@ export default function InterviewCoding({ sessionId, onEnd, onBack }) {
           {correctAnswer && (
             <p className="mb-1 text-sm text-slate-300">Ideal approach: <span className="font-semibold text-white">{correctAnswer}</span></p>
           )}
-          {reason && (
-            <p className="mb-2 text-sm text-slate-300">Reason: <span className="text-slate-200">{reason}</span></p>
-          )}
           <p className="text-slate-200 whitespace-pre-wrap">{feedback}</p>
         </div>
       )}
