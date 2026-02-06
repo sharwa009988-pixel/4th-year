@@ -8,6 +8,49 @@ app.use(express.json());
 const users = [];
 const sessions = [];
 let questionSeq = 1;
+const GROK_API_KEY = process.env.GROK_API_KEY || '';
+const GROK_MODEL = process.env.GROK_MODEL || 'grok-2';
+
+async function grokChat(system, user) {
+  if (!GROK_API_KEY) return null;
+  try {
+    const resp = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROK_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: GROK_MODEL,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+        temperature: 0.7,
+      }),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const content = data?.choices?.[0]?.message?.content || '';
+    return typeof content === 'string' ? content.trim() : '';
+  } catch (e) {
+    return null;
+  }
+}
+
+function parseJsonSafe(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      try { return JSON.parse(text.slice(start, end + 1)); } catch {}
+    }
+    return null;
+  }
+}
 
 function getUserFromAuth(req) {
   const auth = req.headers.authorization || '';
@@ -207,77 +250,168 @@ app.post('/api/interview/question/generate', (req, res) => {
     ],
   };
   let questionText = '';
-  if (m === 'MCQ') {
-    const bank = MCQ[baseTopic] || MCQ['General'];
-    questionText = `(${m}) [${diff}] ${baseTopic}: ${pick(bank)}`;
-  } else if (m === 'CODING') {
-    const bank = CODING[baseTopic] || CODING['General'];
-    questionText = `(${m}) [${diff}] ${baseTopic}: ${pick(bank)}`;
+  questionText = '';
+  const sysQ = 'You are a senior technical interviewer. Generate one role-appropriate question only. If MCQ, include options A-D, do not include the correct answer. Keep it concise and job-relevant.';
+  const promptQ = `Mode: ${m}\nRole: ${baseTopic}\nTopic: ${baseTopic}\nDifficulty: ${diff}\nGenerate exactly one question.\nFor MCQ, include options A-D. Do not include the answer.`;
+  if (GROK_API_KEY) {
+    questionText = null;
+    grokChat(sysQ, promptQ).then(content => {
+      if (content && typeof content === 'string' && content.trim().length > 0) {
+        res.json({ questionId: id, question: content.trim() });
+      } else {
+        let local = '';
+        if (m === 'MCQ') {
+          const bank = MCQ[baseTopic] || MCQ['General'];
+          local = `(${m}) [${diff}] ${baseTopic}: ${pick(bank).replace(/\\nAnswer:.*$/,'')}`;
+        } else if (m === 'CODING') {
+          const bank = CODING[baseTopic] || CODING['General'];
+          local = `(${m}) [${diff}] ${baseTopic}: ${pick(bank)}`;
+        } else {
+          const bank = SUBJECTIVE[baseTopic] || SUBJECTIVE['General'];
+          local = `(${m}) [${diff}] ${baseTopic}: ${pick(bank)}`;
+        }
+        res.json({ questionId: id, question: local });
+      }
+    }).catch(() => {
+      const bank = SUBJECTIVE[baseTopic] || SUBJECTIVE['General'];
+      res.json({ questionId: id, question: `(${m}) [${diff}] ${baseTopic}: ${pick(bank)}` });
+    });
   } else {
-    const bank = SUBJECTIVE[baseTopic] || SUBJECTIVE['General'];
-    questionText = `(${m}) [${diff}] ${baseTopic}: ${pick(bank)}`;
+    if (m === 'MCQ') {
+      const bank = MCQ[baseTopic] || MCQ['General'];
+      questionText = `(${m}) [${diff}] ${baseTopic}: ${pick(bank).replace(/\\nAnswer:.*$/,'')}`;
+    } else if (m === 'CODING') {
+      const bank = CODING[baseTopic] || CODING['General'];
+      questionText = `(${m}) [${diff}] ${baseTopic}: ${pick(bank)}`;
+    } else {
+      const bank = SUBJECTIVE[baseTopic] || SUBJECTIVE['General'];
+      questionText = `(${m}) [${diff}] ${baseTopic}: ${pick(bank)}`;
+    }
+    res.json({ questionId: id, question: questionText });
   }
-  res.json({ questionId: id, question: questionText });
 });
 
 app.post('/api/interview/evaluate', (req, res) => {
   const saved = getUserFromAuth(req);
   if (!saved) return res.status(401).json({ message: 'Unauthorized' });
-  const { userAnswer } = req.body || {};
-  const hasContent = userAnswer && userAnswer.trim().length > 20;
-  const score = hasContent ? 70 : 40;
-  res.json({
-    feedback: hasContent ? 'Good structure. Add more specifics and examples.' : 'Answer is too brief. Elaborate key points and examples.',
-    score,
-    isCorrect: hasContent,
-    correctAnswer: 'Explain fundamentals, typical patterns, and pitfalls with examples.',
-    reason: 'Assessed clarity, completeness, and relevance to the topic.'
-  });
+  const { userAnswer, questionText, mode, topic, difficulty } = req.body || {};
+  if (GROK_API_KEY) {
+    const m = (mode && mode.trim()) ? mode.trim().toUpperCase() : 'SUBJECTIVE';
+    const sysE = 'You are a senior interviewer. Evaluate the candidate answer. Return JSON only: {"feedback": string, "score": number, "isCorrect": boolean, "correctAnswer": string, "reason": string}. For MCQ, "correctAnswer" must be the correct option letter (A-D). For SUBJECTIVE, "correctAnswer" is a concise expected answer summary.';
+    const promptE = `Mode: ${m}\nDifficulty: ${(difficulty||'MEDIUM')}\nQuestion: ${questionText}\nCandidate answer: ${userAnswer}\nProvide JSON only. Score 0-100.`;
+    grokChat(sysE, promptE).then(content => {
+      const parsed = parseJsonSafe(content);
+      if (parsed && typeof parsed === 'object') {
+        res.json(parsed);
+      } else {
+        const ans = String(userAnswer||'').trim();
+        const hasContent = ans.length > 20;
+        res.json({
+          feedback: hasContent ? 'Good structure. Add specifics and examples.' : 'Answer is too brief. Elaborate key points and examples.',
+          score: hasContent ? 70 : 40,
+          isCorrect: false,
+          correctAnswer: m === 'MCQ' ? 'B' : 'Provide a concise, structured answer covering key points.',
+          reason: 'Assessed clarity, completeness, and relevance to the topic.'
+        });
+      }
+    }).catch(() => {
+      const ans = String(userAnswer||'').trim();
+      const hasContent = ans.length > 20;
+      res.json({
+        feedback: hasContent ? 'Good structure. Add specifics and examples.' : 'Answer is too brief. Elaborate key points and examples.',
+        score: hasContent ? 70 : 40,
+        isCorrect: false,
+        correctAnswer: 'B',
+        reason: 'Heuristic fallback.'
+      });
+    });
+  } else {
+    const hasContent = userAnswer && userAnswer.trim().length > 20;
+    const score = hasContent ? 70 : 40;
+    res.json({
+      feedback: hasContent ? 'Good structure. Add more specifics and examples.' : 'Answer is too brief. Elaborate key points and examples.',
+      score,
+      isCorrect: hasContent,
+      correctAnswer: 'Explain fundamentals, typical patterns, and pitfalls with examples.',
+      reason: 'Assessed clarity, completeness, and relevance to the topic.'
+    });
+  }
 });
 
 app.post('/api/interview/coding/problem', (req, res) => {
   const saved = getUserFromAuth(req);
   if (!saved) return res.status(401).json({ message: 'Unauthorized' });
   const topic = (req.body && req.body.topic && req.body.topic.trim()) ? req.body.topic.trim() : (saved.role || 'General');
-  function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
-  const BANK = {
-    General: [
-      'Implement an LRU cache supporting get/put in O(1).',
-      'Given integers, return all unique pairs summing to target.',
-      'Implement a least frequently used (LFU) cache.',
-      'Check if a binary tree is height-balanced.',
-      'Design a thread-safe bounded queue with blocking operations.',
-    ],
-    'Java Backend Developer': [
-      'Design a service that aggregates results from two REST APIs with retries.',
-      'Implement pagination logic returning page info and items for given page.',
-      'Parse logs to compute request latency percentiles (P50/P90/P99).',
-    ],
-    'Java Full Stack Developer': [
-      'Implement a simple router resolving paths to handlers.',
-      'Build a diff function that compares two JSON objects.',
-    ],
-    'Senior Java Developer': [
-      'Design a concurrent scheduler executing tasks with priorities.',
-      'Implement a rate limiter with sliding window and multi-thread safety.',
-    ],
-  };
-  const problem = pick(BANK[topic] || BANK['General']);
-  res.json({ problem });
+  if (GROK_API_KEY) {
+    const sysC = 'You are a senior interviewer. Generate one Java coding problem with clear statement. Do not include solution. Keep it interview-appropriate.';
+    const promptC = `Role: ${topic}\nGenerate one Java coding problem. Include constraints and sample test cases briefly. Output plain text only.`;
+    grokChat(sysC, promptC).then(content => {
+      if (content && content.trim().length > 0) res.json({ problem: content.trim() });
+      else res.json({ problem: 'Implement an LRU cache supporting get/put in O(1).' });
+    }).catch(() => res.json({ problem: 'Implement an LRU cache supporting get/put in O(1).' }));
+  } else {
+    function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+    const BANK = {
+      General: [
+        'Implement an LRU cache supporting get/put in O(1).',
+        'Given integers, return all unique pairs summing to target.',
+        'Implement a least frequently used (LFU) cache.',
+        'Check if a binary tree is height-balanced.',
+        'Design a thread-safe bounded queue with blocking operations.',
+      ],
+      'Java Backend Developer': [
+        'Design a service that aggregates results from two REST APIs with retries.',
+        'Implement pagination logic returning page info and items for given page.',
+        'Parse logs to compute request latency percentiles (P50/P90/P99).',
+      ],
+      'Java Full Stack Developer': [
+        'Implement a simple router resolving paths to handlers.',
+        'Build a diff function that compares two JSON objects.',
+      ],
+      'Senior Java Developer': [
+        'Design a concurrent scheduler executing tasks with priorities.',
+        'Implement a rate limiter with sliding window and multi-thread safety.',
+      ],
+    };
+    const problem = pick(BANK[topic] || BANK['General']);
+    res.json({ problem });
+  }
 });
 
 app.post('/api/interview/evaluate-code', (req, res) => {
   const saved = getUserFromAuth(req);
   if (!saved) return res.status(401).json({ message: 'Unauthorized' });
-  const { code } = req.body || {};
-  const ok = code && code.includes('class') && code.includes('get') && code.includes('put');
-  res.json({
-    feedback: ok ? 'Implementation looks reasonable. Verify eviction and capacity handling.' : 'Add class structure and both get/put operations.',
-    score: ok ? 75 : 45,
-    isCorrect: ok,
-    correctAnswer: 'Use HashMap + Doubly Linked List to achieve O(1).',
-    reason: 'Checks data structures used and operation complexity.'
-  });
+  const { code, problemStatement, executionOutput } = req.body || {};
+  if (GROK_API_KEY) {
+    const sysEC = 'You are a senior interviewer. Evaluate submitted Java code for the given problem. Return JSON only: {"feedback": string, "score": number, "isCorrect": boolean, "correctAnswer": string, "reason": string}.';
+    const promptEC = `Problem: ${problemStatement}\nCode:\n${code}\nProgram output:\n${executionOutput || ''}\nProvide JSON only. Score 0-100.`;
+    grokChat(sysEC, promptEC).then(content => {
+      const parsed = parseJsonSafe(content);
+      if (parsed && typeof parsed === 'object') res.json(parsed);
+      else res.json({
+        feedback: 'Review data structures, complexity, and edge cases.',
+        score: 60,
+        isCorrect: false,
+        correctAnswer: 'Use appropriate structures and handle constraints thoroughly.',
+        reason: 'Fallback heuristic.'
+      });
+    }).catch(() => res.json({
+      feedback: 'Review data structures, complexity, and edge cases.',
+      score: 60,
+      isCorrect: false,
+      correctAnswer: 'Use appropriate structures and handle constraints thoroughly.',
+      reason: 'Evaluation error.'
+    }));
+  } else {
+    const ok = code && code.includes('class') && code.includes('get') && code.includes('put');
+    res.json({
+      feedback: ok ? 'Implementation looks reasonable. Verify eviction and capacity handling.' : 'Add class structure and both get/put operations.',
+      score: ok ? 75 : 45,
+      isCorrect: ok,
+      correctAnswer: 'Use HashMap + Doubly Linked List to achieve O(1).',
+      reason: 'Checks data structures used and operation complexity.'
+    });
+  }
 });
 
 app.post('/api/interview/sessions/:sessionId/end', (req, res) => {
