@@ -8,7 +8,7 @@ app.use(express.json());
 const users = [];
 const sessions = [];
 let questionSeq = 1;
-const GROK_API_KEY = process.env.GROK_API_KEY || '';
+const GROK_API_KEY = process.env.GROK_API_KEY || process.env.X_API_KEY || process.env.XAI_API_KEY || '';
 const GROK_MODEL = process.env.GROK_MODEL || 'grok-2';
 
 async function grokChat(system, user) {
@@ -184,7 +184,8 @@ app.post('/api/interview/question/generate', (req, res) => {
   const id = questionSeq++;
   const baseTopic = (topic && topic.trim()) ? topic.trim() : (saved.role || 'General');
   const diff = (difficulty && difficulty.trim()) ? difficulty.trim().toUpperCase() : 'MEDIUM';
-  const m = (mode && mode.trim()) ? mode.trim().toUpperCase() : 'SUBJECTIVE';
+  const mRaw = (mode && mode.trim()) ? mode.trim().toUpperCase() : 'SUBJECTIVE';
+  const m = mRaw === 'FULL_MOCK' ? 'SUBJECTIVE' : mRaw;
   function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
   const SUBJECTIVE = {
     General: [
@@ -251,13 +252,14 @@ app.post('/api/interview/question/generate', (req, res) => {
   };
   let questionText = '';
   questionText = '';
-  const sysQ = 'You are a senior technical interviewer. Generate one role-appropriate question only. If MCQ, include options A-D, do not include the correct answer. Keep it concise and job-relevant.';
-  const promptQ = `Mode: ${m}\nRole: ${baseTopic}\nTopic: ${baseTopic}\nDifficulty: ${diff}\nGenerate exactly one question.\nFor MCQ, include options A-D. Do not include the answer.`;
+  const sysQ = 'You are a senior technical interviewer. Generate one role-appropriate question only. If MCQ, list options each on a new line exactly formatted "A) ...", "B) ...", "C) ...", "D) ...". Do not include the correct answer. Keep it concise and job-relevant.';
+  const promptQ = `Mode: ${m}\nRole: ${saved.role || baseTopic}\nTopic: ${baseTopic}\nDifficulty: ${diff}\nGenerate exactly one question.\nFor MCQ: first line is the question stem, then four lines with options A) to D). Do not include the answer.`;
   if (GROK_API_KEY) {
     questionText = null;
     grokChat(sysQ, promptQ).then(content => {
       if (content && typeof content === 'string' && content.trim().length > 0) {
-        res.json({ questionId: id, question: content.trim() });
+        const txt = content.replace(/\\n/g, '\n').trim();
+        res.json({ questionId: id, question: txt });
       } else {
         let local = '';
         if (m === 'MCQ') {
@@ -297,7 +299,7 @@ app.post('/api/interview/evaluate', (req, res) => {
   const { userAnswer, questionText, mode, topic, difficulty } = req.body || {};
   if (GROK_API_KEY) {
     const m = (mode && mode.trim()) ? mode.trim().toUpperCase() : 'SUBJECTIVE';
-    const sysE = 'You are a senior interviewer. Evaluate the candidate answer. Return JSON only: {"feedback": string, "score": number, "isCorrect": boolean, "correctAnswer": string, "reason": string}. For MCQ, "correctAnswer" must be the correct option letter (A-D) and reason should explain why that option is correct. For SUBJECTIVE, provide a concise 3-5 line expected answer as "correctAnswer".';
+    const sysE = 'You are a senior interviewer. Evaluate the candidate answer. Return JSON only: {"feedback": string, "score": number, "isCorrect": boolean, "correctAnswer": string, "reason": string}. For MCQ, "correctAnswer" must be the correct option letter (A-D) and "reason" must explain why that option is correct. For SUBJECTIVE, "correctAnswer" must be a concise 3-5 line expected answer.';
     const promptE = `Mode: ${m}\nDifficulty: ${(difficulty||'MEDIUM')}\nQuestion: ${questionText}\nCandidate answer: ${userAnswer}\nProvide JSON only. Score 0-100.`;
     grokChat(sysE, promptE).then(content => {
       const parsed = parseJsonSafe(content);
@@ -419,8 +421,8 @@ app.post('/api/code/execute', async (req, res) => {
   if (!saved) return res.status(401).json({ message: 'Unauthorized' });
   const code = (req.body && req.body.code) ? String(req.body.code) : '';
   if (!code.trim()) return res.status(400).json({ message: 'Code is required' });
-  const cid = process.env.JD_CLIENT_ID || '';
-  const csec = process.env.JD_CLIENT_SECRET || '';
+  const cid = process.env.JD_CLIENT_ID || process.env.JDOODLE_CLIENT_ID || process.env.JDoodle_CLIENT_ID || '';
+  const csec = process.env.JD_CLIENT_SECRET || process.env.JDOODLE_CLIENT_SECRET || process.env.JDoodle_CLIENT_SECRET || '';
   if (!cid || !csec) {
     return res.json({ output: '', error: 'JDoodle credentials not configured' });
   }

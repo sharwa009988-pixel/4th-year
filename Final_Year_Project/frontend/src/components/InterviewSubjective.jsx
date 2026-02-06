@@ -17,7 +17,7 @@ export default function InterviewSubjective({ sessionId, mode, topic, difficulty
 
   function parseMcq(q) {
     if (!q) return { stem: q, options: [] };
-    const text = String(q).trim();
+    const text = String(q).replace(/\\n/g, '\n').trim();
     const lines = text.split('\n').map(s => s.trim());
     const stem = lines[0] || text;
     const options = [];
