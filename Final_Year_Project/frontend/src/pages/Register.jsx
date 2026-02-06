@@ -31,10 +31,8 @@ export default function Register() {
     }
     setLoading(true);
     try {
-      const res = await authApi.register(nameTrim, emailTrim, pwd, pwd);
-      const userObj = { email: res.email, name: res.name, userId: res.userId };
-      login(userObj, res.token);
-      navigate('/select-role');
+      await authApi.register(nameTrim, emailTrim, pwd, pwd);
+      navigate('/login');
     } catch (err) {
       setError(err.message || 'Registration failed');
     } finally {
