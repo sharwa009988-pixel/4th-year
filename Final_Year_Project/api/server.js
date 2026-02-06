@@ -98,6 +98,24 @@ app.post('/api/roles/select', (req, res) => {
   res.json({ message: 'Role selected', role: saved.role });
 });
 
+app.get('/api/dashboard/stats', (req, res) => {
+  const saved = getUserFromAuth(req);
+  if (!saved) return res.status(401).json({ message: 'Unauthorized' });
+  const stats = {
+    targetRole: saved.role || '',
+    totalSessions: 0,
+    sessionsThisRole: 0,
+    averageScore: 0,
+    recentTopics: [],
+    strengthsWeaknesses: {
+      strengths: [],
+      weaknesses: []
+    },
+    topicScores: []
+  };
+  res.json(stats);
+});
+
 app.get('/api/public/health', (req, res) => {
   res.json({ status: 'ok' });
 });
