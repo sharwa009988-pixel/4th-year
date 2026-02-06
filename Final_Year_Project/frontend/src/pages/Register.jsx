@@ -16,17 +16,21 @@ export default function Register() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-    if (password !== confirmPassword) {
+    const nameTrim = name.trim();
+    const emailTrim = email.trim();
+    const pwd = password.trim();
+    const cpwd = confirmPassword.trim();
+    if (pwd !== cpwd) {
       setError('Passwords do not match');
       return;
     }
-    if (password.length < 6) {
+    if (pwd.length < 6) {
       setError('Password must be at least 6 characters');
       return;
     }
     setLoading(true);
     try {
-      const res = await authApi.register(name, email, password);
+      const res = await authApi.register(nameTrim, emailTrim, pwd);
       // backend returns { token, email, name, userId }
       const userObj = { email: res.email, name: res.name, userId: res.userId };
       login(userObj, res.token);
@@ -49,7 +53,6 @@ export default function Register() {
           {error && (
             <div className="mb-4 p-3 rounded-lg bg-red-500/10 text-red-400 text-sm">{error}</div>
           )}
-          <label className="block text-sm font-medium text-slate-300 mb-1">Email</label>
           <label className="block text-sm font-medium text-slate-300 mb-1">Name</label>
           <input
             type="text"
