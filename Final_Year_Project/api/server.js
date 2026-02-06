@@ -56,6 +56,19 @@ async function grokChat(system, user, temperature = 0.7) {
   }
 }
 
+async function grokJson(system, user, schemaHint = '', temperature = 0.2) {
+  const first = await grokChat(system, user, temperature);
+  let parsed = parseJsonSafe(first);
+  if (parsed && typeof parsed === 'object') return parsed;
+  const sys2 = schemaHint
+    ? `${system} Ensure output matches this schema strictly: ${schemaHint}. Return ONLY JSON.`
+    : `${system} Return ONLY JSON. Do not include any prose.`;
+  const second = await grokChat(sys2, user, temperature);
+  parsed = parseJsonSafe(second);
+  if (parsed && typeof parsed === 'object') return parsed;
+  return null;
+}
+
 function parseJsonSafe(text) {
   if (!text) return null;
   try {
@@ -327,71 +340,66 @@ app.post('/api/interview/evaluate', (req, res) => {
   const { userAnswer, questionText, mode, topic, difficulty } = req.body || {};
   if (AI_KEY) {
     const m = (mode && mode.trim()) ? mode.trim().toUpperCase() : 'SUBJECTIVE';
-    const sysE = 'Return ONLY JSON. Schema: {"feedback":{"candidateAnswer":string,"correctAnswer":string,"score":number,"explanation":string,"mistakes":string,"example":string},"newQuestion":{"question":string,"type":string,"difficulty":string}}. Ensure correctAnswer is a real, concise 3-5 line answer. Use technical reasoning.';
-    const promptE = `Type: ${m}\nRole: ${saved.role || ''}\nDifficulty: ${(difficulty||'MEDIUM')}\nQuestion: ${questionText}\nCandidate Answer: ${userAnswer}\nExplain why the correct answer is correct; analyze mistakes; include a short example when useful. Output strictly matching the schema.`;
-    grokChat(sysE, promptE, 0.2).then(content => {
-      let parsed = parseJsonSafe(content);
-      if (!parsed || typeof parsed !== 'object') {
-        parsed = null;
-      }
-      if (parsed && parsed.feedback && parsed.newQuestion) {
-        res.json(parsed);
-      } else {
-        const ans = String(userAnswer||'').trim();
-        const hasContent = ans.length > 20;
-        const explanation = 'Provide role-specific fundamentals and justify choices.';
-        const mistakes = hasContent ? 'Missing specifics and trade-offs.' : 'Answer too brief; lacks key points.';
-        const example = 'Outline a short, concrete scenario.';
-        const fb = {
-          candidateAnswer: ans,
-          correctAnswer: 'Concise 3-5 line ideal answer covering core concepts.',
-          score: hasContent ? 60 : 30,
-          explanation,
-          mistakes,
-          example
-        };
-        const sysQ2 = 'Generate one new role-appropriate interview question. Return ONLY JSON: {"question": string, "type": string, "difficulty": string}.';
-        const promptQ2 = `Role: ${saved.role || ''}\nType: ${m}\nDifficulty: ${(difficulty||'MEDIUM')}\nTopic: ${(topic||'')}\nGenerate next concise question.`;
-        grokChat(sysQ2, promptQ2, 0.2).then(q => {
-          const qParsed = parseJsonSafe(q);
-          res.json({
-            feedback: fb,
-            newQuestion: (qParsed && qParsed.question) ? qParsed : {
-              question: 'Explain how to secure REST APIs in Spring Boot.',
-              type: m,
-              difficulty: (difficulty||'MEDIUM')
-            }
+    if (m === 'MCQ') {
+      const key = typeof req.body.questionId === 'number' ? req.body.questionId : null;
+      const correct = key ? mcqCorrect.get(key) : null;
+      const schema = `{"feedback":{"candidateAnswer":string,"correctAnswer":string,"score":number,"explanation":string,"mistakes":string,"example":string},"newQuestion":{"question":string,"type":string,"difficulty":string}}`;
+      const sysE = 'Return ONLY JSON per schema. Use provided correct option letter as ground truth and give interview-grade explanation and mistake analysis. Keep explanations 3-5 lines.';
+      const promptE = `Role: ${saved.role || ''}\nType: MCQ\nDifficulty: ${(difficulty||'MEDIUM')}\nQuestion:\n${questionText}\nCorrect Option Letter: ${correct || 'UNKNOWN'}\nCandidate Option Letter: ${String(userAnswer||'').trim().toUpperCase()}\nExplain technically why the correct option is right and the candidate choice is wrong if applicable. Provide a short example.`;
+      grokJson(sysE, promptE, schema, 0.2).then(parsed => {
+        if (parsed && parsed.feedback && parsed.newQuestion) {
+          res.json(parsed);
+        } else {
+          const sysExp = 'Explain briefly (3-5 lines) why the provided MCQ correct option is right and the candidate choice is wrong.';
+          const promptExp = `Question:\n${questionText}\nCorrect: ${correct || 'UNKNOWN'}\nCandidate: ${String(userAnswer||'').trim().toUpperCase()}`;
+          grokChat(sysExp, promptExp, 0.2).then(exp => {
+            const explanation = (exp && typeof exp === 'string') ? exp.replace(/\\n/g,'\n').trim() : '';
+            res.json({
+              feedback: {
+                candidateAnswer: String(userAnswer||'').trim().toUpperCase(),
+                correctAnswer: correct || '',
+                score: (correct && String(userAnswer||'').trim().toUpperCase() === correct) ? 100 : 0,
+                explanation,
+                mistakes: (correct && String(userAnswer||'').trim().toUpperCase() !== correct) ? 'Selected option does not satisfy the required property.' : '',
+                example: ''
+              },
+              newQuestion: {
+                question: 'Explain how to secure REST APIs in Spring Boot.',
+                type: 'MCQ',
+                difficulty: (difficulty||'MEDIUM')
+              }
+            });
+          }).catch(() => {
+            res.json({
+              feedback: {
+                candidateAnswer: String(userAnswer||'').trim().toUpperCase(),
+                correctAnswer: correct || '',
+                score: (correct && String(userAnswer||'').trim().toUpperCase() === correct) ? 100 : 0,
+                explanation: '',
+                mistakes: '',
+                example: ''
+              },
+              newQuestion: {
+                question: 'Explain how to secure REST APIs in Spring Boot.',
+                type: 'MCQ',
+                difficulty: (difficulty||'MEDIUM')
+              }
+            });
           });
-        }).catch(() => {
-          res.json({
-            feedback: fb,
-            newQuestion: {
-              question: 'Explain how to secure REST APIs in Spring Boot.',
-              type: m,
-              difficulty: (difficulty||'MEDIUM')
-            }
-          });
-        });
-      }
-    }).catch(() => {
-      const ans = String(userAnswer||'').trim();
-      const hasContent = ans.length > 20;
-      res.json({
-        feedback: {
-          candidateAnswer: ans,
-          correctAnswer: 'Concise 3-5 line ideal answer covering core concepts.',
-          score: hasContent ? 60 : 30,
-          explanation: 'Provide role-specific fundamentals and justify choices.',
-          mistakes: hasContent ? 'Missing specifics and trade-offs.' : 'Answer too brief; lacks key points.',
-          example: 'Outline a short, concrete scenario.'
-        },
-        newQuestion: {
-          question: 'Explain how to secure REST APIs in Spring Boot.',
-          type: m,
-          difficulty: (difficulty||'MEDIUM')
         }
-      });
-    });
+      }).catch(() => res.status(502).json({ message: 'AI evaluation failed' }));
+    } else {
+      const schema = `{"feedback":{"candidateAnswer":string,"correctAnswer":string,"score":number,"explanation":string,"mistakes":string,"example":string},"newQuestion":{"question":string,"type":string,"difficulty":string}}`;
+      const sysE = 'Return ONLY JSON per schema. Provide a real 3-5 line correct answer; technical explanation; mistake analysis; concise example.';
+      const promptE = `Role: ${saved.role || ''}\nType: SUBJECTIVE\nDifficulty: ${(difficulty||'MEDIUM')}\nQuestion:\n${questionText}\nCandidate Answer:\n${userAnswer}\nEvaluate and respond per schema.`;
+      grokJson(sysE, promptE, schema, 0.2).then(parsed => {
+        if (parsed && parsed.feedback && parsed.newQuestion) {
+          res.json(parsed);
+        } else {
+          res.status(502).json({ message: 'AI evaluation failed to produce JSON' });
+        }
+      }).catch(() => res.status(502).json({ message: 'AI evaluation failed' }));
+    }
   } else {
     const m = (mode && mode.trim()) ? mode.trim().toUpperCase() : 'SUBJECTIVE';
     if (m === 'MCQ') {
