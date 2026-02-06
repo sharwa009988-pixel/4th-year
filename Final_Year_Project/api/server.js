@@ -6,6 +6,8 @@ app.use(cors());
 app.use(express.json());
 
 const users = [];
+const sessions = [];
+let questionSeq = 1;
 
 function getUserFromAuth(req) {
   const auth = req.headers.authorization || '';
@@ -118,6 +120,90 @@ app.get('/api/dashboard/stats', (req, res) => {
 
 app.get('/api/public/health', (req, res) => {
   res.json({ status: 'ok' });
+});
+
+// ---------- Interview endpoints ----------
+app.post('/api/interview/start', (req, res) => {
+  const saved = getUserFromAuth(req);
+  if (!saved) return res.status(401).json({ message: 'Unauthorized' });
+  const { mode, topic, difficulty } = req.body || {};
+  if (!mode) return res.status(400).json({ message: 'Mode is required' });
+  const id = Date.now();
+  const session = { id, userId: saved.id, mode, topic: topic || '', difficulty: difficulty || 'MEDIUM', startedAt: new Date().toISOString(), endedAt: null };
+  sessions.push(session);
+  res.json({ id, mode: session.mode, topic: session.topic, difficulty: session.difficulty });
+});
+
+app.post('/api/interview/question/generate', (req, res) => {
+  const saved = getUserFromAuth(req);
+  if (!saved) return res.status(401).json({ message: 'Unauthorized' });
+  const { mode, topic, difficulty } = req.body || {};
+  const id = questionSeq++;
+  const baseTopic = topic && topic.trim() ? topic.trim() : (saved.role || 'General');
+  const question = `(${mode || 'SUBJECTIVE'}) [${difficulty || 'MEDIUM'}] ${baseTopic}: Describe key concepts and best practices.`;
+  res.json({ questionId: id, question });
+});
+
+app.post('/api/interview/evaluate', (req, res) => {
+  const saved = getUserFromAuth(req);
+  if (!saved) return res.status(401).json({ message: 'Unauthorized' });
+  const { userAnswer } = req.body || {};
+  const hasContent = userAnswer && userAnswer.trim().length > 20;
+  const score = hasContent ? 70 : 40;
+  res.json({
+    feedback: hasContent ? 'Good structure. Add more specifics and examples.' : 'Answer is too brief. Elaborate key points and examples.',
+    score,
+    isCorrect: hasContent,
+    correctAnswer: 'Explain fundamentals, typical patterns, and pitfalls with examples.',
+    reason: 'Assessed clarity, completeness, and relevance to the topic.'
+  });
+});
+
+app.post('/api/interview/coding/problem', (req, res) => {
+  const saved = getUserFromAuth(req);
+  if (!saved) return res.status(401).json({ message: 'Unauthorized' });
+  res.json({ problem: 'Implement an LRU cache with get/put in O(1).' });
+});
+
+app.post('/api/interview/evaluate-code', (req, res) => {
+  const saved = getUserFromAuth(req);
+  if (!saved) return res.status(401).json({ message: 'Unauthorized' });
+  const { code } = req.body || {};
+  const ok = code && code.includes('class') && code.includes('get') && code.includes('put');
+  res.json({
+    feedback: ok ? 'Implementation looks reasonable. Verify eviction and capacity handling.' : 'Add class structure and both get/put operations.',
+    score: ok ? 75 : 45,
+    isCorrect: ok,
+    correctAnswer: 'Use HashMap + Doubly Linked List to achieve O(1).',
+    reason: 'Checks data structures used and operation complexity.'
+  });
+});
+
+app.post('/api/interview/sessions/:sessionId/end', (req, res) => {
+  const saved = getUserFromAuth(req);
+  if (!saved) return res.status(401).json({ message: 'Unauthorized' });
+  const sessionId = Number(req.params.sessionId);
+  const s = sessions.find(x => x.id === sessionId && x.userId === saved.id);
+  if (!s) return res.status(404).json({ message: 'Session not found' });
+  s.endedAt = new Date().toISOString();
+  res.json({ message: 'Ended' });
+});
+
+app.get('/api/interview/sessions/:sessionId', (req, res) => {
+  const saved = getUserFromAuth(req);
+  if (!saved) return res.status(401).json({ message: 'Unauthorized' });
+  const sessionId = Number(req.params.sessionId);
+  const s = sessions.find(x => x.id === sessionId && x.userId === saved.id);
+  if (!s) return res.status(404).json({ message: 'Session not found' });
+  res.json(s);
+});
+
+app.get('/api/interview/history', (req, res) => {
+  const saved = getUserFromAuth(req);
+  if (!saved) return res.status(401).json({ message: 'Unauthorized' });
+  const limit = Number(req.query.limit || 20);
+  const items = sessions.filter(x => x.userId === saved.id).slice(-limit).reverse();
+  res.json(items);
 });
 
 // dev error handler
