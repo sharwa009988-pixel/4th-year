@@ -4,8 +4,13 @@ import axios from "axios";
    AXIOS BASE CONFIG
 ============================= */
 
+const BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  import.meta.env.VITE_API_URL ||
+  "/api";
+
 const axiosApi = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || "https://ai-interview-prep-ryon.onrender.com/api",
+  baseURL: BASE_URL,
   headers: {
     "Content-Type": "application/json",
   },
@@ -23,6 +28,12 @@ async function handleRes(promise) {
   } catch (err) {
     const status = err.response?.status;
     const data = err.response?.data;
+    if (!err.response) {
+      throw new Error(`Cannot reach API at ${BASE_URL}. Set VITE_API_BASE_URL to your backend URL.`);
+    }
+    if (status === 404) {
+      throw new Error("Endpoint not found (check base URL and API path).");
+    }
     if (status === 401 || status === 403) {
       throw new Error("Invalid email or password");
     }
@@ -30,7 +41,7 @@ async function handleRes(promise) {
       throw new Error(data.message);
     }
     if (typeof data === "string") {
-      throw new Error("Cannot reach API endpoint. Please set VITE_API_BASE_URL to your backend.");
+      throw new Error("Server returned a non-JSON error. Check backend logs.");
     }
     throw new Error("Request failed. Please try again.");
   }
