@@ -17,10 +17,40 @@ app.post('/api/auth/register', (req, res, next) => {
     const user = { id: users.length + 1, name, email };
     users.push({ ...user, password });
     console.log('Registered:', user);
-    res.status(201).json({ user });
+    res.status(201).json({
+      token: `dev-token-${user.id}`,
+      email: user.email,
+      name: user.name,
+      userId: user.id,
+      roleSelected: false,
+    });
   } catch (err) {
     next(err);
   }
+});
+
+app.post('/api/auth/login', (req, res, next) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ message: 'Missing fields' });
+    const saved = users.find(u => u.email === email);
+    if (!saved) return res.status(401).json({ message: 'Invalid email or password' });
+    if (saved.password !== password) return res.status(401).json({ message: 'Invalid email or password' });
+    const user = { id: saved.id, name: saved.name, email: saved.email };
+    res.json({
+      token: `dev-token-${user.id}`,
+      email: user.email,
+      name: user.name,
+      userId: user.id,
+      roleSelected: false,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/api/public/health', (req, res) => {
+  res.json({ status: 'ok' });
 });
 
 // dev error handler
