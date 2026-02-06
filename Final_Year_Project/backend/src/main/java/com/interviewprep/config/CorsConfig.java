@@ -15,11 +15,14 @@ public class CorsConfig {
 
     @Value("${cors.allowed-origins}")
     private String allowedOrigins;
+    @Value("${cors.allowed-origin-patterns:https://*.vercel.app}")
+    private String allowedOriginPatterns;
 
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(Arrays.asList(allowedOrigins.split(",")));
+        configuration.setAllowedOriginPatterns(Arrays.asList(allowedOriginPatterns.split(",")));
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList("*"));
         configuration.setAllowCredentials(true);
