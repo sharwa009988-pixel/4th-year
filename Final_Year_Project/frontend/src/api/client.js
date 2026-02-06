@@ -146,9 +146,24 @@ export const interviewApi = {
     }),
 
   generateCodingProblem: (topic) =>
-    api("POST", "/interview/coding/problem", {
-      topic: topic || null,
-    }),
+    (async () => {
+      try {
+        return await api("POST", "/interview/coding/problem", {
+          topic: topic || null,
+        });
+      } catch (e) {
+        const msg = String(e.message || '');
+        if (msg.includes('Endpoint not found')) {
+          const alt = await api("POST", "/interview/question/generate", {
+            mode: "CODING",
+            topic: topic || null,
+            difficulty: "MEDIUM",
+          });
+          return { problem: alt.question };
+        }
+        throw e;
+      }
+    })(),
 
   evaluate: (
     questionId,

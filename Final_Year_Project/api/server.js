@@ -139,9 +139,85 @@ app.post('/api/interview/question/generate', (req, res) => {
   if (!saved) return res.status(401).json({ message: 'Unauthorized' });
   const { mode, topic, difficulty } = req.body || {};
   const id = questionSeq++;
-  const baseTopic = topic && topic.trim() ? topic.trim() : (saved.role || 'General');
-  const question = `(${mode || 'SUBJECTIVE'}) [${difficulty || 'MEDIUM'}] ${baseTopic}: Describe key concepts and best practices.`;
-  res.json({ questionId: id, question });
+  const baseTopic = (topic && topic.trim()) ? topic.trim() : (saved.role || 'General');
+  const diff = (difficulty && difficulty.trim()) ? difficulty.trim().toUpperCase() : 'MEDIUM';
+  const m = (mode && mode.trim()) ? mode.trim().toUpperCase() : 'SUBJECTIVE';
+  function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+  const SUBJECTIVE = {
+    General: [
+      'Explain SOLID principles with practical examples in Java.',
+      'Describe how to design REST APIs with proper status codes.',
+      'Discuss transactions and isolation levels in Spring Data JPA.',
+      'Explain thread safety and concurrency best practices in Java.',
+      'Describe JWT-based authentication and refresh token strategy.',
+    ],
+    'Java Full Stack Developer': [
+      'How would you design a CRUD app with Spring Boot and React?',
+      'Explain state management approaches in React for complex apps.',
+      'Discuss securing a full-stack app (CORS, CSRF, JWT, roles).',
+      'Describe error handling and validation on backend and frontend.',
+    ],
+    'Java Backend Developer': [
+      'Explain Spring Boot auto-configuration and profiles usage.',
+      'How do you design pagination and filtering for large datasets?',
+      'Discuss database indexing and query optimization with JPA.',
+    ],
+    'Senior Java Developer': [
+      'Describe hexagonal architecture and its benefits in large systems.',
+      'How to design scalable microservices with resilience patterns?',
+      'Discuss performance tuning strategies for high throughput APIs.',
+    ],
+    'Spring Boot Microservices Engineer': [
+      'Explain inter-service communication patterns and circuit breakers.',
+      'Describe service discovery and configuration management approach.',
+      'Discuss observability: logs, metrics, tracing in microservices.',
+    ],
+  };
+  const MCQ = {
+    General: [
+      'Which collection offers O(1) average-time lookup?\\nA) LinkedList\\nB) HashMap\\nC) TreeMap\\nD) Vector\\nAnswer: B',
+      'What HTTP status means created?\\nA) 200\\nB) 201\\nC) 202\\nD) 204\\nAnswer: B',
+      'Which annotation enables Spring Boot app?\\nA) @Configuration\\nB) @EnableAutoConfiguration\\nC) @SpringBootApplication\\nD) @Component\\nAnswer: C',
+    ],
+    'Java Backend Developer': [
+      'Which isolation level prevents dirty reads?\\nA) READ_UNCOMMITTED\\nB) READ_COMMITTED\\nC) REPEATABLE_READ\\nD) SERIALIZABLE\\nAnswer: B',
+      'Which JPA fetch type is default for @ManyToOne?\\nA) EAGER\\nB) LAZY\\nC) NONE\\nD) EXTRA\\nAnswer: A',
+    ],
+    'Spring Boot Microservices Engineer': [
+      'Which pattern handles remote failures?\\nA) Facade\\nB) Circuit Breaker\\nC) Decorator\\nD) Iterator\\nAnswer: B',
+      'Which tool provides distributed tracing?\\nA) Lombok\\nB) Zipkin\\nC) Mockito\\nD) Flyway\\nAnswer: B',
+    ],
+  };
+  const CODING = {
+    General: [
+      'Implement an LRU cache supporting get/put in O(1).',
+      'Given an array, find two numbers that sum to target.',
+      'Check if parentheses in a string are balanced.',
+      'Design a rate limiter supporting allow() within window.',
+      'Implement a thread-safe producer-consumer queue.',
+    ],
+    'Java Backend Developer': [
+      'Design a REST endpoint to paginate results with filters.',
+      'Implement a connection pool with basic acquire/release.',
+      'Build a simple in-memory key-value store with TTL eviction.',
+    ],
+    'Java Full Stack Developer': [
+      'Implement a JSON serializer for a subset of types.',
+      'Build a form validator that reports field-level errors.',
+    ],
+  };
+  let questionText = '';
+  if (m === 'MCQ') {
+    const bank = MCQ[baseTopic] || MCQ['General'];
+    questionText = `(${m}) [${diff}] ${baseTopic}: ${pick(bank)}`;
+  } else if (m === 'CODING') {
+    const bank = CODING[baseTopic] || CODING['General'];
+    questionText = `(${m}) [${diff}] ${baseTopic}: ${pick(bank)}`;
+  } else {
+    const bank = SUBJECTIVE[baseTopic] || SUBJECTIVE['General'];
+    questionText = `(${m}) [${diff}] ${baseTopic}: ${pick(bank)}`;
+  }
+  res.json({ questionId: id, question: questionText });
 });
 
 app.post('/api/interview/evaluate', (req, res) => {
@@ -162,7 +238,32 @@ app.post('/api/interview/evaluate', (req, res) => {
 app.post('/api/interview/coding/problem', (req, res) => {
   const saved = getUserFromAuth(req);
   if (!saved) return res.status(401).json({ message: 'Unauthorized' });
-  res.json({ problem: 'Implement an LRU cache with get/put in O(1).' });
+  const topic = (req.body && req.body.topic && req.body.topic.trim()) ? req.body.topic.trim() : (saved.role || 'General');
+  function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+  const BANK = {
+    General: [
+      'Implement an LRU cache supporting get/put in O(1).',
+      'Given integers, return all unique pairs summing to target.',
+      'Implement a least frequently used (LFU) cache.',
+      'Check if a binary tree is height-balanced.',
+      'Design a thread-safe bounded queue with blocking operations.',
+    ],
+    'Java Backend Developer': [
+      'Design a service that aggregates results from two REST APIs with retries.',
+      'Implement pagination logic returning page info and items for given page.',
+      'Parse logs to compute request latency percentiles (P50/P90/P99).',
+    ],
+    'Java Full Stack Developer': [
+      'Implement a simple router resolving paths to handlers.',
+      'Build a diff function that compares two JSON objects.',
+    ],
+    'Senior Java Developer': [
+      'Design a concurrent scheduler executing tasks with priorities.',
+      'Implement a rate limiter with sliding window and multi-thread safety.',
+    ],
+  };
+  const problem = pick(BANK[topic] || BANK['General']);
+  res.json({ problem });
 });
 
 app.post('/api/interview/evaluate-code', (req, res) => {
