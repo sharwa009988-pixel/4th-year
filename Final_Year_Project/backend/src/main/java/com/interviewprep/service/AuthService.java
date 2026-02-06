@@ -31,6 +31,10 @@ public class AuthService {
         if (userRepository.existsByEmail(email)) {
             throw new RuntimeException("Email already registered");
         }
+        if (request.getPassword() == null || request.getConfirmPassword() == null ||
+                !request.getPassword().equals(request.getConfirmPassword())) {
+            throw new RuntimeException("Passwords do not match");
+        }
 
         User user = User.builder()
                 .email(email)
