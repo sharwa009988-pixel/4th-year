@@ -14,9 +14,11 @@ export default function Login() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    const emailTrim = email.trim();
+    const pwd = password.trim();
     setLoading(true);
     try {
-      const res = await authApi.login(email, password);
+      const res = await authApi.login(emailTrim, pwd);
       // backend returns { token, email, name, userId }
       const userObj = { email: res.email, name: res.name, userId: res.userId };
       login(userObj, res.token);

@@ -21,13 +21,18 @@ async function handleRes(promise) {
     const res = await promise;
     return res.data;
   } catch (err) {
-    if (err.response?.data) {
-      throw new Error(
-        err.response.data.message ||
-        JSON.stringify(err.response.data)
-      );
+    const status = err.response?.status;
+    const data = err.response?.data;
+    if (status === 401 || status === 403) {
+      throw new Error("Invalid email or password");
     }
-    throw err;
+    if (data && typeof data === "object" && data.message) {
+      throw new Error(data.message);
+    }
+    if (typeof data === "string") {
+      throw new Error("Cannot reach API endpoint. Please set VITE_API_BASE_URL to your backend.");
+    }
+    throw new Error("Request failed. Please try again.");
   }
 }
 
