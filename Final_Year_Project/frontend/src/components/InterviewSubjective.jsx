@@ -6,11 +6,8 @@ export default function InterviewSubjective({ sessionId, mode, topic, difficulty
   const [questionId, setQuestionId] = useState(null);
   const [answer, setAnswer] = useState('');
   const [selectedOption, setSelectedOption] = useState('');
-  const [feedback, setFeedback] = useState('');
-  const [score, setScore] = useState(null);
-  const [isCorrect, setIsCorrect] = useState(null);
-  const [correctAnswer, setCorrectAnswer] = useState('');
-  const [reason, setReason] = useState('');
+  const [fb, setFb] = useState(null);
+  const [suggested, setSuggested] = useState(null);
   const [loadingQuestion, setLoadingQuestion] = useState(false);
   const [loadingEval, setLoadingEval] = useState(false);
   const [error, setError] = useState('');
@@ -41,7 +38,8 @@ export default function InterviewSubjective({ sessionId, mode, topic, difficulty
 
   const loadQuestion = useCallback(async () => {
     setError('');
-    setFeedback('');
+    setFb(null);
+    setSuggested(null);
     setAnswer('');
     setSelectedOption('');
     setLoadingQuestion(true);
@@ -65,11 +63,8 @@ export default function InterviewSubjective({ sessionId, mode, topic, difficulty
     setLoadingEval(true);
     try {
       const res = await interviewApi.evaluate(questionId, question, userAnswer, sessionId, mode, topic, difficulty);
-      setFeedback(res.feedback || '');
-      setScore(res.score ?? null);
-      setIsCorrect(typeof res.isCorrect === 'boolean' ? res.isCorrect : null);
-      setCorrectAnswer(res.correctAnswer || '');
-      setReason(res.reason || '');
+      setFb(res.feedback || null);
+      setSuggested(res.newQuestion || null);
     } catch (e) {
       setError(e.message || 'Failed to evaluate');
     } finally {
@@ -150,24 +145,29 @@ export default function InterviewSubjective({ sessionId, mode, topic, difficulty
           {loadingEval ? 'Evaluating...' : 'Submit for feedback'}
         </button>
       </div>
-      {feedback && (
+      {fb && (
         <div className="bg-surface-800/80 border border-slate-700 rounded-xl p-6">
           <h3 className="text-lg font-medium text-primary-300 mb-2">AI Feedback</h3>
-          {isCorrect != null && (
-            <p className={`mb-2 text-sm font-semibold ${isCorrect ? 'text-green-400' : 'text-red-400'}`}>
-              {isCorrect ? 'Correct' : 'Incorrect'}
-            </p>
+          <p className="text-slate-300 mb-2">Question: <span className="text-white">{question}</span></p>
+          <p className="text-slate-300 mb-2">Candidate Answer: <span className="text-white">{fb.candidateAnswer}</span></p>
+          {fb.correctAnswer && (
+            <p className="text-slate-300 mb-2">Correct Answer: <span className="text-white">{fb.correctAnswer}</span></p>
           )}
-          {score != null && (
-            <p className="mb-2 text-sm text-slate-300">Score: {Math.round(score * 10) / 10}</p>
+          <div className="mt-3 space-y-1 text-slate-200">
+            {fb.explanation && <p>- Explanation: {fb.explanation}</p>}
+            {fb.mistakes && <p>- Mistake Analysis: {fb.mistakes}</p>}
+            {fb.example && <p>- Example: <span className="whitespace-pre-wrap">{fb.example}</span></p>}
+          </div>
+          {typeof fb.score !== 'undefined' && (
+            <p className="mt-3 text-sm text-slate-300">Score: {fb.score}</p>
           )}
-          {correctAnswer && (
-            <p className="mb-1 text-sm text-slate-300">Correct answer: <span className="font-semibold text-white">{correctAnswer}</span></p>
-          )}
-          {reason && (
-            <p className="mb-2 text-sm text-slate-300">Reason: <span className="text-slate-200">{reason}</span></p>
-          )}
-          <p className="text-slate-200 whitespace-pre-wrap">{feedback}</p>
+        </div>
+      )}
+      {suggested && suggested.question && (
+        <div className="bg-surface-800/80 border border-slate-700 rounded-xl p-6">
+          <h3 className="text-lg font-medium text-primary-300 mb-2">Next Question</h3>
+          <p className="text-slate-200 whitespace-pre-wrap mb-2">{suggested.question}</p>
+          <p className="text-slate-400 text-sm">Type: {suggested.type} • Difficulty: {suggested.difficulty}</p>
         </div>
       )}
     </div>

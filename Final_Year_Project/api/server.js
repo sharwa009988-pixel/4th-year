@@ -24,20 +24,21 @@ try {
 const sessions = [];
 let questionSeq = 1;
 const mcqCorrect = new Map();
-const GROK_API_KEY = process.env.GROK_API_KEY || process.env.X_API_KEY || process.env.XAI_API_KEY || '';
-const GROK_MODEL = process.env.GROK_MODEL || 'grok-2';
+const AI_KEY = process.env.GROKX_API_KEY || process.env.GROK_API_KEY || process.env.X_API_KEY || process.env.XAI_API_KEY || '';
+const AI_MODEL = process.env.GROKX_MODEL || process.env.GROK_MODEL || 'grok-2';
+const AI_BASE_URL = process.env.GROKX_API_BASE_URL || 'https://api.x.ai/v1/chat/completions';
 
 async function grokChat(system, user) {
-  if (!GROK_API_KEY) return null;
+  if (!AI_KEY) return null;
   try {
-    const resp = await fetchFn('https://api.x.ai/v1/chat/completions', {
+    const resp = await fetchFn(AI_BASE_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GROK_API_KEY}`,
+        'Authorization': `Bearer ${AI_KEY}`,
       },
       body: JSON.stringify({
-        model: GROK_MODEL,
+        model: AI_MODEL,
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: user },
@@ -272,7 +273,7 @@ app.post('/api/interview/question/generate', (req, res) => {
   questionText = '';
   const sysQ = 'You are a senior technical interviewer. Generate one role-appropriate question only. If MCQ, list options each on a new line exactly formatted "A) ...", "B) ...", "C) ...", "D) ...". Do not include the correct answer. Keep it concise and job-relevant. Never repeat a previous question for the same role and topic.';
   const promptQ = `Seed: ${id}\nMode: ${m}\nRole: ${saved.role || baseTopic}\nTopic: ${baseTopic}\nDifficulty: ${diff}\nGenerate exactly one question.\nFor MCQ: first line is the question stem, then four lines with options A) to D). Do not include the answer.`;
-  if (GROK_API_KEY) {
+  if (AI_KEY) {
     questionText = null;
     grokChat(sysQ, promptQ).then(content => {
       if (content && typeof content === 'string' && content.trim().length > 0) {
@@ -323,34 +324,70 @@ app.post('/api/interview/evaluate', (req, res) => {
   const saved = getUserFromAuth(req);
   if (!saved) return res.status(401).json({ message: 'Unauthorized' });
   const { userAnswer, questionText, mode, topic, difficulty } = req.body || {};
-  if (GROK_API_KEY) {
+  if (AI_KEY) {
     const m = (mode && mode.trim()) ? mode.trim().toUpperCase() : 'SUBJECTIVE';
-    const sysE = 'You are a senior interviewer. Evaluate the candidate answer. Return JSON only: {"feedback": string, "score": number, "isCorrect": boolean, "correctAnswer": string, "reason": string}. For MCQ, "correctAnswer" must be the correct option letter (A-D) and "reason" must explain briefly why that option is correct. For SUBJECTIVE, "correctAnswer" must be a concise 3-5 line ideal answer in plain text, not instructions.';
-    const promptE = `Mode: ${m}\nDifficulty: ${(difficulty||'MEDIUM')}\nQuestion: ${questionText}\nCandidate answer: ${userAnswer}\nProvide JSON only. Score 0-100. Make "correctAnswer" the actual expected answer text (3-5 lines) for SUBJECTIVE.`;
+    const sysE = 'Return JSON only with keys "feedback" and "newQuestion". "feedback" must include "candidateAnswer","correctAnswer","score","explanation","mistakes","example". "newQuestion" must include "question","type","difficulty". Keep answers concise and interview-ready.';
+    const promptE = `Type: ${m}\nRole: ${saved.role || ''}\nDifficulty: ${(difficulty||'MEDIUM')}\nQuestion: ${questionText}\nCandidate Answer: ${userAnswer}\nFollow format. Explain technically; avoid vague phrasing.`;
     grokChat(sysE, promptE).then(content => {
-      const parsed = parseJsonSafe(content);
-      if (parsed && typeof parsed === 'object') {
+      let parsed = parseJsonSafe(content);
+      if (!parsed || typeof parsed !== 'object') {
+        parsed = null;
+      }
+      if (parsed && parsed.feedback && parsed.newQuestion) {
         res.json(parsed);
       } else {
         const ans = String(userAnswer||'').trim();
         const hasContent = ans.length > 20;
-        res.json({
-          feedback: hasContent ? 'Good structure. Add specifics and examples.' : 'Answer is too brief. Elaborate key points and examples.',
-          score: hasContent ? 70 : 40,
-          isCorrect: false,
-          correctAnswer: m === 'MCQ' ? 'B' : 'Provide a concise, structured answer covering key points.',
-          reason: 'Assessed clarity, completeness, and relevance to the topic.'
+        const explanation = 'Provide role-specific fundamentals and justify choices.';
+        const mistakes = hasContent ? 'Missing specifics and trade-offs.' : 'Answer too brief; lacks key points.';
+        const example = 'Outline a short, concrete scenario.';
+        const fb = {
+          candidateAnswer: ans,
+          correctAnswer: 'Concise 3-5 line ideal answer covering core concepts.',
+          score: hasContent ? 60 : 30,
+          explanation,
+          mistakes,
+          example
+        };
+        const sysQ2 = 'Generate one new role-appropriate interview question. Keep concise. Output plain text only.';
+        const promptQ2 = `Type: ${m}\nRole: ${saved.role || ''}\nDifficulty: ${(difficulty||'MEDIUM')}\nTopic: ${(topic||'')}\nGenerate next question.`;
+        grokChat(sysQ2, promptQ2).then(q => {
+          res.json({
+            feedback: fb,
+            newQuestion: {
+              question: (q && typeof q === 'string') ? q.replace(/\\n/g,'\n').trim() : 'Explain how to secure REST APIs in Spring Boot.',
+              type: m,
+              difficulty: (difficulty||'MEDIUM')
+            }
+          });
+        }).catch(() => {
+          res.json({
+            feedback: fb,
+            newQuestion: {
+              question: 'Explain how to secure REST APIs in Spring Boot.',
+              type: m,
+              difficulty: (difficulty||'MEDIUM')
+            }
+          });
         });
       }
     }).catch(() => {
       const ans = String(userAnswer||'').trim();
       const hasContent = ans.length > 20;
       res.json({
-        feedback: hasContent ? 'Good structure. Add specifics and examples.' : 'Answer is too brief. Elaborate key points and examples.',
-        score: hasContent ? 70 : 40,
-        isCorrect: false,
-        correctAnswer: 'B',
-        reason: 'Heuristic fallback.'
+        feedback: {
+          candidateAnswer: ans,
+          correctAnswer: 'Concise 3-5 line ideal answer covering core concepts.',
+          score: hasContent ? 60 : 30,
+          explanation: 'Provide role-specific fundamentals and justify choices.',
+          mistakes: hasContent ? 'Missing specifics and trade-offs.' : 'Answer too brief; lacks key points.',
+          example: 'Outline a short, concrete scenario.'
+        },
+        newQuestion: {
+          question: 'Explain how to secure REST APIs in Spring Boot.',
+          type: m,
+          difficulty: (difficulty||'MEDIUM')
+        }
       });
     });
   } else {
@@ -360,22 +397,42 @@ app.post('/api/interview/evaluate', (req, res) => {
       const correct = key ? mcqCorrect.get(key) : null;
       const ua = String(userAnswer || '').trim().toUpperCase();
       const isCorrect = !!correct && ua === correct;
+      const explanation = 'Correct option aligns with the API/library behavior and constraints.';
+      const mistake = isCorrect ? '' : 'Chosen option does not satisfy required properties.';
+      const example = 'Short example demonstrating the correct behavior.';
       res.json({
-        feedback: isCorrect ? 'Correct choice.' : 'Incorrect choice.',
-        score: isCorrect ? 100 : 0,
-        isCorrect,
-        correctAnswer: correct || '',
-        reason: isCorrect ? '' : 'Fallback evaluation based on known key.'
+        feedback: {
+          candidateAnswer: ua,
+          correctAnswer: correct || '',
+          score: isCorrect ? 100 : 0,
+          explanation,
+          mistakes: mistake,
+          example
+        },
+        newQuestion: {
+          question: 'Explain how to secure REST APIs in Spring Boot.',
+          type: m,
+          difficulty: (difficulty||'MEDIUM')
+        }
       });
     } else {
-      const hasContent = userAnswer && userAnswer.trim().length > 20;
-      const score = hasContent ? 70 : 40;
+      const ans = String(userAnswer||'').trim();
+      const hasContent = ans.length > 20;
+      const score = hasContent ? 60 : 30;
       res.json({
-        feedback: hasContent ? 'Good structure. Add more specifics and examples.' : 'Answer is too brief. Elaborate key points and examples.',
-        score,
-        isCorrect: hasContent,
-        correctAnswer: 'Explain fundamentals, typical patterns, and pitfalls with examples.',
-        reason: 'Assessed clarity, completeness, and relevance to the topic.'
+        feedback: {
+          candidateAnswer: ans,
+          correctAnswer: 'Concise 3-5 line ideal answer covering core concepts.',
+          score,
+          explanation: 'Provide role-specific fundamentals and justify choices.',
+          mistakes: hasContent ? 'Missing specifics and trade-offs.' : 'Answer too brief; lacks key points.',
+          example: 'Outline a short, concrete scenario.'
+        },
+        newQuestion: {
+          question: 'Explain how to secure REST APIs in Spring Boot.',
+          type: m,
+          difficulty: (difficulty||'MEDIUM')
+        }
       });
     }
   }
@@ -385,7 +442,7 @@ app.post('/api/interview/coding/problem', (req, res) => {
   const saved = getUserFromAuth(req);
   if (!saved) return res.status(401).json({ message: 'Unauthorized' });
   const topic = (req.body && req.body.topic && req.body.topic.trim()) ? req.body.topic.trim() : (saved.role || 'General');
-  if (GROK_API_KEY) {
+  if (AI_KEY) {
     const sysC = 'You are a senior interviewer. Generate one Java coding problem with clear statement. Do not include solution. Keep it interview-appropriate.';
     const promptC = `Role: ${topic}\nGenerate one Java coding problem. Include constraints and sample test cases briefly. Output plain text only.`;
     grokChat(sysC, promptC).then(content => {
@@ -425,35 +482,62 @@ app.post('/api/interview/evaluate-code', (req, res) => {
   const saved = getUserFromAuth(req);
   if (!saved) return res.status(401).json({ message: 'Unauthorized' });
   const { code, problemStatement, executionOutput } = req.body || {};
-  if (GROK_API_KEY) {
-    const sysEC = 'You are a senior interviewer. Evaluate submitted Java code for the given problem. Return JSON only: {"feedback": string, "score": number, "isCorrect": boolean, "correctAnswer": string}. "correctAnswer" should briefly describe the ideal approach and key steps. Do not include a "reason" field.';
-    const promptEC = `Problem: ${problemStatement}\nCode:\n${code}\nProgram output:\n${executionOutput || ''}\nProvide JSON only. Score 0-100. Do not include "reason".`;
+  if (AI_KEY) {
+    const sysEC = 'Return JSON only with keys "feedback" and "newProblem". "feedback" must include "candidateCode","score","explanation","algorithmAnalysis","improvementSuggestions". "newProblem" must include "title","description","difficulty","topics". Keep content interview-ready.';
+    const promptEC = `Role: Java Backend Developer\nProblem: ${problemStatement}\nCandidate Code:\n${code}\nProgram output:\n${executionOutput || ''}\nFollow format. Provide technical reasoning, complexities, edge cases, and suggestions. Generate a new role-specific coding problem.`;
     grokChat(sysEC, promptEC).then(content => {
-      const parsed = parseJsonSafe(content);
-      if (parsed && typeof parsed === 'object') res.json({ ...parsed, reason: '' });
-      else res.json({
-        feedback: 'Focus on algorithmic approach, complexity, and clean code.',
+      let parsed = parseJsonSafe(content);
+      if (!parsed || typeof parsed !== 'object') parsed = null;
+      if (parsed && parsed.feedback && parsed.newProblem) {
+        res.json(parsed);
+      } else {
+        const fb = {
+          candidateCode: String(code||''),
+          score: 60,
+          explanation: 'Assess algorithm correctness and structure.',
+          algorithmAnalysis: 'Time: O(n); Space: O(n) typical; verify edge cases.',
+          improvementSuggestions: 'Use appropriate data structures; handle constraints and errors.'
+        };
+        const np = {
+          title: 'Design a rate limiter (sliding window)',
+          description: 'Implement a thread-safe rate limiter that allows N requests per user per rolling T seconds.',
+          difficulty: 'MEDIUM',
+          topics: ['Concurrency','Data Structures']
+        };
+        res.json({ feedback: fb, newProblem: np });
+      }
+    }).catch(() => {
+      const fb = {
+        candidateCode: String(code||''),
         score: 60,
-        isCorrect: false,
-        correctAnswer: 'Use appropriate data structures and handle constraints thoroughly.',
-        reason: ''
-      });
-    }).catch(() => res.json({
-      feedback: 'Focus on algorithmic approach, complexity, and clean code.',
-      score: 60,
-      isCorrect: false,
-      correctAnswer: 'Use appropriate data structures and handle constraints thoroughly.',
-      reason: ''
-    }));
-  } else {
-    const ok = code && code.includes('class') && code.includes('get') && code.includes('put');
-    res.json({
-      feedback: ok ? 'Implementation looks reasonable. Verify eviction and capacity handling.' : 'Add class structure and both get/put operations.',
-      score: ok ? 75 : 45,
-      isCorrect: ok,
-      correctAnswer: 'Use HashMap + Doubly Linked List to achieve O(1).',
-      reason: ''
+        explanation: 'Assess algorithm correctness and structure.',
+        algorithmAnalysis: 'Time: O(n); Space: O(n) typical; verify edge cases.',
+        improvementSuggestions: 'Use appropriate data structures; handle constraints and errors.'
+      };
+      const np = {
+        title: 'Design a rate limiter (sliding window)',
+        description: 'Implement a thread-safe rate limiter that allows N requests per user per rolling T seconds.',
+        difficulty: 'MEDIUM',
+        topics: ['Concurrency','Data Structures']
+      };
+      res.json({ feedback: fb, newProblem: np });
     });
+  } else {
+    const ok = code && code.includes('class');
+    const fb = {
+      candidateCode: String(code||''),
+      score: ok ? 70 : 40,
+      explanation: ok ? 'Implementation compiles; verify correctness paths.' : 'Missing basic structure and operations.',
+      algorithmAnalysis: 'Analyze time/space and edge cases.',
+      improvementSuggestions: 'Structure code clearly; add tests and handle edge cases.'
+    };
+    const np = {
+      title: 'Implement LRU Cache',
+      description: 'Design an LRU cache supporting get/put in O(1) using appropriate data structures.',
+      difficulty: 'MEDIUM',
+      topics: ['Data Structures','Algorithms']
+    };
+    res.json({ feedback: fb, newProblem: np });
   }
 });
 

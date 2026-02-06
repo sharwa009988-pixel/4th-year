@@ -13,11 +13,8 @@ export default function InterviewCoding({ sessionId, onEnd, onBack }) {
   const [problem, setProblem] = useState('');
   const [code, setCode] = useState(DEFAULT_JAVA);
   const [output, setOutput] = useState('');
-  const [feedback, setFeedback] = useState('');
-  const [score, setScore] = useState(null);
-  const [isCorrect, setIsCorrect] = useState(null);
-  const [correctAnswer, setCorrectAnswer] = useState('');
-  const [reason, setReason] = useState('');
+  const [fb, setFb] = useState(null);
+  const [newProb, setNewProb] = useState(null);
   const [loadingProblem, setLoadingProblem] = useState(false);
   const [loadingRun, setLoadingRun] = useState(false);
   const [loadingEval, setLoadingEval] = useState(false);
@@ -25,7 +22,8 @@ export default function InterviewCoding({ sessionId, onEnd, onBack }) {
 
   const loadProblem = useCallback(async () => {
     setError('');
-    setFeedback('');
+    setFb(null);
+    setNewProb(null);
     setLoadingProblem(true);
     try {
       const res = await interviewApi.generateCodingProblem(null);
@@ -62,11 +60,8 @@ export default function InterviewCoding({ sessionId, onEnd, onBack }) {
     setLoadingEval(true);
     try {
       const res = await interviewApi.evaluateCode(code, problem, output, sessionId);
-      setFeedback(res.feedback || '');
-      setScore(res.score ?? null);
-      setIsCorrect(typeof res.isCorrect === 'boolean' ? res.isCorrect : null);
-      setCorrectAnswer(res.correctAnswer || '');
-      setReason(res.reason || '');
+      setFb(res.feedback || null);
+      setNewProb(res.newProblem || null);
     } catch (e) {
       setError(e.message || 'Failed to get feedback');
     } finally {
@@ -143,21 +138,25 @@ export default function InterviewCoding({ sessionId, onEnd, onBack }) {
           <pre className="text-slate-200 text-sm font-mono whitespace-pre-wrap">{output}</pre>
         </div>
       )}
-      {feedback && (
+      {fb && (
         <div className="bg-surface-800/80 border border-slate-700 rounded-xl p-6">
           <h3 className="text-lg font-medium text-primary-300 mb-2">AI Feedback</h3>
-          {isCorrect != null && (
-            <p className={`mb-2 text-sm font-semibold ${isCorrect ? 'text-green-400' : 'text-red-400'}`}>
-              {isCorrect ? 'Correct' : 'Incorrect'}
-            </p>
+          <p className="text-slate-300 mb-2">Candidate Code:</p>
+          <pre className="text-slate-200 whitespace-pre-wrap text-sm">{fb.candidateCode}</pre>
+          {typeof fb.score !== 'undefined' && (
+            <p className="mb-2 text-sm text-slate-300">Score: {fb.score}</p>
           )}
-          {score != null && (
-            <p className="mb-2 text-sm text-slate-300">Score: {Math.round(score * 10) / 10}</p>
-          )}
-          {correctAnswer && (
-            <p className="mb-1 text-sm text-slate-300">Ideal approach: <span className="font-semibold text-white">{correctAnswer}</span></p>
-          )}
-          <p className="text-slate-200 whitespace-pre-wrap">{feedback}</p>
+          {fb.explanation && <p className="text-slate-200 mb-1">Explanation: {fb.explanation}</p>}
+          {fb.algorithmAnalysis && <p className="text-slate-200 mb-1">Algorithm Analysis: {fb.algorithmAnalysis}</p>}
+          {fb.improvementSuggestions && <p className="text-slate-200">Improvement Suggestions: {fb.improvementSuggestions}</p>}
+        </div>
+      )}
+      {newProb && (
+        <div className="bg-surface-800/80 border border-slate-700 rounded-xl p-6">
+          <h3 className="text-lg font-medium text-primary-300 mb-2">Next Problem</h3>
+          <p className="text-slate-200 font-semibold">{newProb.title}</p>
+          <p className="text-slate-200 whitespace-pre-wrap mt-1">{newProb.description}</p>
+          <p className="text-slate-400 text-sm mt-2">Difficulty: {newProb.difficulty} • Topics: {(newProb.topics||[]).join(', ')}</p>
         </div>
       )}
     </div>
