@@ -9,8 +9,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+@CrossOrigin(origins = {
+    "http://localhost:5173",
+    "https://ai-interview-prep-livid.vercel.app"
+})
 
-@CrossOrigin(origins = "http://localhost:5173") // <-- add this for quick test
 @RestController
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor
