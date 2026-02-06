@@ -44,7 +44,6 @@ async function grokChat(system, user, temperature = 0.7) {
           { role: 'user', content: user },
         ],
         temperature,
-        response_format: { type: 'json_object' }
       }),
     });
     if (!resp.ok) return null;
@@ -56,14 +55,42 @@ async function grokChat(system, user, temperature = 0.7) {
   }
 }
 
+async function grokChatJson(system, user, temperature = 0.2) {
+  if (!AI_KEY) return null;
+  try {
+    const resp = await fetchFn(AI_BASE_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${AI_KEY}`,
+      },
+      body: JSON.stringify({
+        model: AI_MODEL,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+        temperature,
+        response_format: { type: 'json_object' }
+      }),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const content = data?.choices?.[0]?.message?.content || '';
+    return typeof content === 'string' ? content.trim() : '';
+  } catch {
+    return null;
+  }
+}
+
 async function grokJson(system, user, schemaHint = '', temperature = 0.2) {
-  const first = await grokChat(system, user, temperature);
+  const first = await grokChatJson(system, user, temperature);
   let parsed = parseJsonSafe(first);
   if (parsed && typeof parsed === 'object') return parsed;
   const sys2 = schemaHint
     ? `${system} Ensure output matches this schema strictly: ${schemaHint}. Return ONLY JSON.`
     : `${system} Return ONLY JSON. Do not include any prose.`;
-  const second = await grokChat(sys2, user, temperature);
+  const second = await grokChatJson(sys2, user, temperature);
   parsed = parseJsonSafe(second);
   if (parsed && typeof parsed === 'object') return parsed;
   return null;
@@ -452,13 +479,74 @@ app.post('/api/interview/coding/problem', (req, res) => {
   const saved = getUserFromAuth(req);
   if (!saved) return res.status(401).json({ message: 'Unauthorized' });
   const topic = (req.body && req.body.topic && req.body.topic.trim()) ? req.body.topic.trim() : (saved.role || 'General');
+  const uid = saved.id;
+  const normalize = (s) => String(s || '').replace(/\r/g,'').trim().toLowerCase();
+  const seenMap = (globalThis.__seenCoding__ ||= new Map());
+  const seen = seenMap.get(uid) || new Set();
+  seenMap.set(uid, seen);
   if (AI_KEY) {
-    const sysC = 'Return ONLY plain text for a single Java coding problem suitable for backend engineers. Include constraints and 2-3 sample test cases briefly.';
-    const promptC = `Role: ${topic}\nGenerate one problem. No solution. Keep concise and practical.`;
-    grokChat(sysC, promptC, 0.2).then(content => {
-      if (content && content.trim().length > 0) res.json({ problem: content.trim() });
-      else res.json({ problem: 'Implement an LRU cache supporting get/put in O(1).' });
-    }).catch(() => res.json({ problem: 'Implement an LRU cache supporting get/put in O(1).' }));
+    const baseSys = 'Return ONLY plain text for a single Java coding problem suitable for backend engineers. Include constraints and 2-3 sample test cases briefly. Do NOT repeat any problem listed.';
+    const listed = Array.from(seen).slice(-10).join('\n- ');
+    const promptC = `Role: ${topic}\nSeed: ${Date.now()}\nPreviously used problems:\n- ${listed || '(none)'}\nGenerate one new problem. No solution. Keep concise and practical.`;
+    grokChat(baseSys, promptC, 0.2).then(content => {
+      let text = (content || '').trim();
+      let norm = normalize(text);
+      let tries = 0;
+      const tryAgain = () => {
+        if (tries >= 2) {
+          // Fallback bank excluding seen
+          function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+          const BANK = {
+            General: [
+              'Implement an LRU cache supporting get/put in O(1).',
+              'Given integers, return all unique pairs summing to target.',
+              'Implement a least frequently used (LFU) cache.',
+              'Check if a binary tree is height-balanced.',
+              'Design a thread-safe bounded queue with blocking operations.',
+            ],
+            'Java Backend Developer': [
+              'Design a service that aggregates results from two REST APIs with retries.',
+              'Implement pagination logic returning page info and items for given page.',
+              'Parse logs to compute request latency percentiles (P50/P90/P99).',
+            ],
+            'Java Full Stack Developer': [
+              'Implement a simple router resolving paths to handlers.',
+              'Build a diff function that compares two JSON objects.',
+            ],
+            'Senior Java Developer': [
+              'Design a concurrent scheduler executing tasks with priorities.',
+              'Implement a rate limiter with sliding window and multi-thread safety.',
+            ],
+          };
+          const pool = (BANK[topic] || BANK['General']).filter(p => !seen.has(normalize(p)));
+          const chosen = (pool.length ? pick(pool) : pick(BANK['General']));
+          seen.add(normalize(chosen));
+          res.json({ problem: chosen });
+          return;
+        }
+        tries++;
+        const sys2 = 'Return ONLY plain text for a different Java coding problem than the one provided. Include constraints and 2-3 sample tests.';
+        const prompt2 = `Role: ${topic}\nAvoid repeating:\n${text}\nSeed: ${Date.now()}`;
+        grokChat(sys2, prompt2, 0.2).then(c2 => {
+          text = (c2 || '').trim();
+          norm = normalize(text);
+          if (!text || seen.has(norm)) {
+            tryAgain();
+          } else {
+            seen.add(norm);
+            res.json({ problem: text });
+          }
+        }).catch(() => tryAgain());
+      };
+      if (!text || seen.has(norm)) {
+        tryAgain();
+      } else {
+        seen.add(norm);
+        res.json({ problem: text });
+      }
+    }).catch(() => {
+      res.json({ problem: 'Implement an LRU cache supporting get/put in O(1).' });
+    });
   } else {
     function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
     const BANK = {
@@ -483,7 +571,9 @@ app.post('/api/interview/coding/problem', (req, res) => {
         'Implement a rate limiter with sliding window and multi-thread safety.',
       ],
     };
-    const problem = pick(BANK[topic] || BANK['General']);
+    const pool = (BANK[topic] || BANK['General']).filter(p => !seen.has(normalize(p)));
+    const problem = (pool.length ? pick(pool) : pick(BANK['General']));
+    seen.add(normalize(problem));
     res.json({ problem });
   }
 });

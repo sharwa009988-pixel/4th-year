@@ -64,7 +64,9 @@ export default function InterviewSubjective({ sessionId, mode, topic, difficulty
     try {
       const res = await interviewApi.evaluate(questionId, question, userAnswer, sessionId, mode, topic, difficulty);
       setFb(res.feedback || null);
-      setSuggested(res.newQuestion || null);
+      if (String(mode).toUpperCase() !== 'FULL_MOCK') {
+        setSuggested(res.newQuestion || null);
+      }
     } catch (e) {
       setError(e.message || 'Failed to evaluate');
     } finally {
@@ -163,7 +165,7 @@ export default function InterviewSubjective({ sessionId, mode, topic, difficulty
           )}
         </div>
       )}
-      {suggested && suggested.question && (
+      {String(mode).toUpperCase() !== 'FULL_MOCK' && suggested && suggested.question && (
         <div className="bg-surface-800/80 border border-slate-700 rounded-xl p-6">
           <h3 className="text-lg font-medium text-primary-300 mb-2">Next Question</h3>
           <p className="text-slate-200 whitespace-pre-wrap mb-2">{suggested.question}</p>
