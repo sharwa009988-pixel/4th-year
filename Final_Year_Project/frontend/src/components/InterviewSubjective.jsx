@@ -17,12 +17,24 @@ export default function InterviewSubjective({ sessionId, mode, topic, difficulty
 
   function parseMcq(q) {
     if (!q) return { stem: q, options: [] };
-    const parts = String(q).split('\n').map(s => s.trim()).filter(Boolean);
-    const stem = parts[0] || q;
+    const text = String(q).trim();
+    const lines = text.split('\n').map(s => s.trim());
+    const stem = lines[0] || text;
     const options = [];
-    for (let i = 1; i < parts.length; i++) {
-      const m = parts[i].match(/^([A-D])\)\s*(.*)$/);
-      if (m) options.push({ key: m[1], text: m[2] });
+    const regex = /(?:^|\s|\n)([A-D])[\)\.]\s*([^A-D].*?)(?=(?:\s|\n)[A-D][\)\.]|\s*$)/g;
+    const flat = text.slice(stem.length);
+    const matches = Array.from(flat.matchAll(regex));
+    if (matches.length > 0) {
+      for (const m of matches) {
+        const key = m[1];
+        const val = m[2].trim();
+        options.push({ key, text: val });
+      }
+    } else {
+      for (let i = 1; i < lines.length; i++) {
+        const m = lines[i].match(/^([A-D])[\)\.]\s*(.*)$/);
+        if (m) options.push({ key: m[1], text: m[2] });
+      }
     }
     return { stem, options };
   }
