@@ -170,6 +170,7 @@ export const interviewApi = {
     questionText,
     userAnswer,
     sessionId,
+    mode,
     topic,
     difficulty
   ) =>
@@ -178,6 +179,7 @@ export const interviewApi = {
       questionText,
       userAnswer,
       sessionId,
+      mode,
       topic,
       difficulty,
     }),

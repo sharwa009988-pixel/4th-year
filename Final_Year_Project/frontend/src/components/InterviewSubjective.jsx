@@ -5,6 +5,7 @@ export default function InterviewSubjective({ sessionId, mode, topic, difficulty
   const [question, setQuestion] = useState('');
   const [questionId, setQuestionId] = useState(null);
   const [answer, setAnswer] = useState('');
+  const [selectedOption, setSelectedOption] = useState('');
   const [feedback, setFeedback] = useState('');
   const [score, setScore] = useState(null);
   const [isCorrect, setIsCorrect] = useState(null);
@@ -14,10 +15,23 @@ export default function InterviewSubjective({ sessionId, mode, topic, difficulty
   const [loadingEval, setLoadingEval] = useState(false);
   const [error, setError] = useState('');
 
+  function parseMcq(q) {
+    if (!q) return { stem: q, options: [] };
+    const parts = String(q).split('\n').map(s => s.trim()).filter(Boolean);
+    const stem = parts[0] || q;
+    const options = [];
+    for (let i = 1; i < parts.length; i++) {
+      const m = parts[i].match(/^([A-D])\)\s*(.*)$/);
+      if (m) options.push({ key: m[1], text: m[2] });
+    }
+    return { stem, options };
+  }
+
   const loadQuestion = useCallback(async () => {
     setError('');
     setFeedback('');
     setAnswer('');
+    setSelectedOption('');
     setLoadingQuestion(true);
     try {
       const res = await interviewApi.generateQuestion(mode, topic, difficulty);
@@ -31,11 +45,14 @@ export default function InterviewSubjective({ sessionId, mode, topic, difficulty
   }, [mode, topic, difficulty]);
 
   const submitAnswer = async () => {
-    if (!question.trim() || !answer.trim()) return;
+    if (!question.trim()) return;
+    const isMcq = String(mode).toUpperCase() === 'MCQ';
+    const userAnswer = isMcq ? selectedOption.trim() : answer.trim();
+    if (!userAnswer) return;
     setError('');
     setLoadingEval(true);
     try {
-      const res = await interviewApi.evaluate(questionId, question, answer, sessionId, topic, difficulty);
+      const res = await interviewApi.evaluate(questionId, question, userAnswer, sessionId, mode, topic, difficulty);
       setFeedback(res.feedback || '');
       setScore(res.score ?? null);
       setIsCorrect(typeof res.isCorrect === 'boolean' ? res.isCorrect : null);
@@ -70,23 +87,52 @@ export default function InterviewSubjective({ sessionId, mode, topic, difficulty
             {loadingQuestion ? 'Generating...' : 'New question'}
           </button>
         </div>
-        {question ? (
-          <p className="text-slate-200 whitespace-pre-wrap mb-4">{question}</p>
-        ) : (
+        {!question ? (
           <p className="text-slate-500 italic">Click &quot;New question&quot; to generate a role-specific question.</p>
+        ) : String(mode).toUpperCase() === 'MCQ' ? (
+          (() => {
+            const parsed = parseMcq(question);
+            return (
+              <div className="mb-4 space-y-3">
+                <p className="text-slate-200">{parsed.stem}</p>
+                <div className="space-y-2">
+                  {parsed.options.map(opt => (
+                    <label key={opt.key} className="flex items-center gap-2 text-slate-200">
+                      <input
+                        type="radio"
+                        name="mcq"
+                        value={opt.key}
+                        checked={selectedOption === opt.key}
+                        onChange={(e) => setSelectedOption(e.target.value)}
+                        className="accent-primary-600"
+                      />
+                      <span className="font-semibold">{opt.key})</span>
+                      <span>{opt.text}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            );
+          })()
+        ) : (
+          <p className="text-slate-200 whitespace-pre-wrap mb-4">{question}</p>
         )}
-        <label className="block text-sm font-medium text-slate-300 mb-2">Your answer</label>
-        <textarea
-          value={answer}
-          onChange={(e) => setAnswer(e.target.value)}
-          rows={5}
-          className="w-full px-4 py-2 rounded-lg bg-surface-900 border border-slate-700 text-white placeholder-slate-500 focus:border-primary-500 resize-y"
-          placeholder="Type your answer..."
-        />
+        {String(mode).toUpperCase() !== 'MCQ' && (
+          <>
+            <label className="block text-sm font-medium text-slate-300 mb-2">Your answer</label>
+            <textarea
+              value={answer}
+              onChange={(e) => setAnswer(e.target.value)}
+              rows={5}
+              className="w-full px-4 py-2 rounded-lg bg-surface-900 border border-slate-700 text-white placeholder-slate-500 focus:border-primary-500 resize-y"
+              placeholder="Type your answer..."
+            />
+          </>
+        )}
         <button
           type="button"
           onClick={submitAnswer}
-          disabled={!answer.trim() || loadingEval}
+          disabled={loadingEval || (String(mode).toUpperCase() === 'MCQ' ? !selectedOption : !answer.trim())}
           className="mt-4 px-4 py-2 rounded-lg bg-primary-600 text-white font-medium disabled:opacity-50"
         >
           {loadingEval ? 'Evaluating...' : 'Submit for feedback'}

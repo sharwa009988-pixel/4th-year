@@ -297,7 +297,7 @@ app.post('/api/interview/evaluate', (req, res) => {
   const { userAnswer, questionText, mode, topic, difficulty } = req.body || {};
   if (GROK_API_KEY) {
     const m = (mode && mode.trim()) ? mode.trim().toUpperCase() : 'SUBJECTIVE';
-    const sysE = 'You are a senior interviewer. Evaluate the candidate answer. Return JSON only: {"feedback": string, "score": number, "isCorrect": boolean, "correctAnswer": string, "reason": string}. For MCQ, "correctAnswer" must be the correct option letter (A-D). For SUBJECTIVE, "correctAnswer" is a concise expected answer summary.';
+    const sysE = 'You are a senior interviewer. Evaluate the candidate answer. Return JSON only: {"feedback": string, "score": number, "isCorrect": boolean, "correctAnswer": string, "reason": string}. For MCQ, "correctAnswer" must be the correct option letter (A-D) and reason should explain why that option is correct. For SUBJECTIVE, provide a concise 3-5 line expected answer as "correctAnswer".';
     const promptE = `Mode: ${m}\nDifficulty: ${(difficulty||'MEDIUM')}\nQuestion: ${questionText}\nCandidate answer: ${userAnswer}\nProvide JSON only. Score 0-100.`;
     grokChat(sysE, promptE).then(content => {
       const parsed = parseJsonSafe(content);
@@ -383,7 +383,7 @@ app.post('/api/interview/evaluate-code', (req, res) => {
   if (!saved) return res.status(401).json({ message: 'Unauthorized' });
   const { code, problemStatement, executionOutput } = req.body || {};
   if (GROK_API_KEY) {
-    const sysEC = 'You are a senior interviewer. Evaluate submitted Java code for the given problem. Return JSON only: {"feedback": string, "score": number, "isCorrect": boolean, "correctAnswer": string, "reason": string}.';
+    const sysEC = 'You are a senior interviewer. Evaluate submitted Java code for the given problem. Return JSON only: {"feedback": string, "score": number, "isCorrect": boolean, "correctAnswer": string, "reason": string}. "correctAnswer" should briefly describe the ideal approach and key steps.';
     const promptEC = `Problem: ${problemStatement}\nCode:\n${code}\nProgram output:\n${executionOutput || ''}\nProvide JSON only. Score 0-100.`;
     grokChat(sysEC, promptEC).then(content => {
       const parsed = parseJsonSafe(content);
@@ -414,6 +414,36 @@ app.post('/api/interview/evaluate-code', (req, res) => {
   }
 });
 
+app.post('/api/code/execute', async (req, res) => {
+  const saved = getUserFromAuth(req);
+  if (!saved) return res.status(401).json({ message: 'Unauthorized' });
+  const code = (req.body && req.body.code) ? String(req.body.code) : '';
+  if (!code.trim()) return res.status(400).json({ message: 'Code is required' });
+  const cid = process.env.JD_CLIENT_ID || '';
+  const csec = process.env.JD_CLIENT_SECRET || '';
+  if (!cid || !csec) {
+    return res.json({ output: '', error: 'JDoodle credentials not configured' });
+  }
+  try {
+    const resp = await fetch('https://api.jdoodle.com/v1/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clientId: cid,
+        clientSecret: csec,
+        script: code,
+        language: 'java',
+        versionIndex: '4'
+      })
+    });
+    const data = await resp.json();
+    const output = String(data.output || '').trim();
+    const error = String(data.error || data.cpuTime || '').trim();
+    res.json({ output, error });
+  } catch (e) {
+    res.json({ output: '', error: String(e.message || 'Execution error') });
+  }
+});
 app.post('/api/interview/sessions/:sessionId/end', (req, res) => {
   const saved = getUserFromAuth(req);
   if (!saved) return res.status(401).json({ message: 'Unauthorized' });
