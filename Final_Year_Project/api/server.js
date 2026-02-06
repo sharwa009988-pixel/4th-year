@@ -28,7 +28,7 @@ const AI_KEY = process.env.GROKX_API_KEY || process.env.GROK_API_KEY || process.
 const AI_MODEL = process.env.GROKX_MODEL || process.env.GROK_MODEL || 'grok-2';
 const AI_BASE_URL = process.env.GROKX_API_BASE_URL || 'https://api.x.ai/v1/chat/completions';
 
-async function grokChat(system, user) {
+async function grokChat(system, user, temperature = 0.7) {
   if (!AI_KEY) return null;
   try {
     const resp = await fetchFn(AI_BASE_URL, {
@@ -43,7 +43,8 @@ async function grokChat(system, user) {
           { role: 'system', content: system },
           { role: 'user', content: user },
         ],
-        temperature: 0.7,
+        temperature,
+        response_format: { type: 'json_object' }
       }),
     });
     if (!resp.ok) return null;
@@ -326,9 +327,9 @@ app.post('/api/interview/evaluate', (req, res) => {
   const { userAnswer, questionText, mode, topic, difficulty } = req.body || {};
   if (AI_KEY) {
     const m = (mode && mode.trim()) ? mode.trim().toUpperCase() : 'SUBJECTIVE';
-    const sysE = 'Return JSON only with keys "feedback" and "newQuestion". "feedback" must include "candidateAnswer","correctAnswer","score","explanation","mistakes","example". "newQuestion" must include "question","type","difficulty". Keep answers concise and interview-ready.';
-    const promptE = `Type: ${m}\nRole: ${saved.role || ''}\nDifficulty: ${(difficulty||'MEDIUM')}\nQuestion: ${questionText}\nCandidate Answer: ${userAnswer}\nFollow format. Explain technically; avoid vague phrasing.`;
-    grokChat(sysE, promptE).then(content => {
+    const sysE = 'Return ONLY JSON. Schema: {"feedback":{"candidateAnswer":string,"correctAnswer":string,"score":number,"explanation":string,"mistakes":string,"example":string},"newQuestion":{"question":string,"type":string,"difficulty":string}}. Ensure correctAnswer is a real, concise 3-5 line answer. Use technical reasoning.';
+    const promptE = `Type: ${m}\nRole: ${saved.role || ''}\nDifficulty: ${(difficulty||'MEDIUM')}\nQuestion: ${questionText}\nCandidate Answer: ${userAnswer}\nExplain why the correct answer is correct; analyze mistakes; include a short example when useful. Output strictly matching the schema.`;
+    grokChat(sysE, promptE, 0.2).then(content => {
       let parsed = parseJsonSafe(content);
       if (!parsed || typeof parsed !== 'object') {
         parsed = null;
@@ -349,13 +350,14 @@ app.post('/api/interview/evaluate', (req, res) => {
           mistakes,
           example
         };
-        const sysQ2 = 'Generate one new role-appropriate interview question. Keep concise. Output plain text only.';
-        const promptQ2 = `Type: ${m}\nRole: ${saved.role || ''}\nDifficulty: ${(difficulty||'MEDIUM')}\nTopic: ${(topic||'')}\nGenerate next question.`;
-        grokChat(sysQ2, promptQ2).then(q => {
+        const sysQ2 = 'Generate one new role-appropriate interview question. Return ONLY JSON: {"question": string, "type": string, "difficulty": string}.';
+        const promptQ2 = `Role: ${saved.role || ''}\nType: ${m}\nDifficulty: ${(difficulty||'MEDIUM')}\nTopic: ${(topic||'')}\nGenerate next concise question.`;
+        grokChat(sysQ2, promptQ2, 0.2).then(q => {
+          const qParsed = parseJsonSafe(q);
           res.json({
             feedback: fb,
-            newQuestion: {
-              question: (q && typeof q === 'string') ? q.replace(/\\n/g,'\n').trim() : 'Explain how to secure REST APIs in Spring Boot.',
+            newQuestion: (qParsed && qParsed.question) ? qParsed : {
+              question: 'Explain how to secure REST APIs in Spring Boot.',
               type: m,
               difficulty: (difficulty||'MEDIUM')
             }
@@ -443,9 +445,9 @@ app.post('/api/interview/coding/problem', (req, res) => {
   if (!saved) return res.status(401).json({ message: 'Unauthorized' });
   const topic = (req.body && req.body.topic && req.body.topic.trim()) ? req.body.topic.trim() : (saved.role || 'General');
   if (AI_KEY) {
-    const sysC = 'You are a senior interviewer. Generate one Java coding problem with clear statement. Do not include solution. Keep it interview-appropriate.';
-    const promptC = `Role: ${topic}\nGenerate one Java coding problem. Include constraints and sample test cases briefly. Output plain text only.`;
-    grokChat(sysC, promptC).then(content => {
+    const sysC = 'Return ONLY plain text for a single Java coding problem suitable for backend engineers. Include constraints and 2-3 sample test cases briefly.';
+    const promptC = `Role: ${topic}\nGenerate one problem. No solution. Keep concise and practical.`;
+    grokChat(sysC, promptC, 0.2).then(content => {
       if (content && content.trim().length > 0) res.json({ problem: content.trim() });
       else res.json({ problem: 'Implement an LRU cache supporting get/put in O(1).' });
     }).catch(() => res.json({ problem: 'Implement an LRU cache supporting get/put in O(1).' }));
@@ -483,9 +485,9 @@ app.post('/api/interview/evaluate-code', (req, res) => {
   if (!saved) return res.status(401).json({ message: 'Unauthorized' });
   const { code, problemStatement, executionOutput } = req.body || {};
   if (AI_KEY) {
-    const sysEC = 'Return JSON only with keys "feedback" and "newProblem". "feedback" must include "candidateCode","score","explanation","algorithmAnalysis","improvementSuggestions". "newProblem" must include "title","description","difficulty","topics". Keep content interview-ready.';
-    const promptEC = `Role: Java Backend Developer\nProblem: ${problemStatement}\nCandidate Code:\n${code}\nProgram output:\n${executionOutput || ''}\nFollow format. Provide technical reasoning, complexities, edge cases, and suggestions. Generate a new role-specific coding problem.`;
-    grokChat(sysEC, promptEC).then(content => {
+    const sysEC = 'Return ONLY JSON. Schema: {"feedback":{"candidateCode":string,"score":number,"explanation":string,"algorithmAnalysis":string,"improvementSuggestions":string},"newProblem":{"title":string,"description":string,"difficulty":string,"topics":string[]}}. Use technical reasoning and include time/space complexity and edge cases.';
+    const promptEC = `Role: Java Backend Developer\nProblem: ${problemStatement}\nCandidate Code:\n${code}\nProgram output:\n${executionOutput || ''}\nEvaluate correctness; provide analysis and suggestions; then generate a new backend-aligned problem. Output strictly matching the schema.`;
+    grokChat(sysEC, promptEC, 0.2).then(content => {
       let parsed = parseJsonSafe(content);
       if (!parsed || typeof parsed !== 'object') parsed = null;
       if (parsed && parsed.feedback && parsed.newProblem) {
