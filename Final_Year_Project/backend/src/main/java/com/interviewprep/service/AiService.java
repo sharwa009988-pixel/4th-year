@@ -86,20 +86,24 @@ public class AiService {
                 response = sendGrokWithRetries(messages, options);
             }
             if (response != null && !response.isBlank() && !response.startsWith("ERROR_QUOTA_EXCEEDED:")) {
-                log.debug("Generated question via Grok for role: {}, topic: {}, type: {}", role, topic, questionType);
+                log.debug("Generated question via Grok/HF for role: {}, topic: {}, type: {}", role, topic, questionType);
                 String text = response.trim();
                 if ("MCQ".equalsIgnoreCase(questionType)) {
                     text = sanitizeMcqQuestion(text);
                 }
                 text = sanitizeQuestionTags(text);
+                if (text == null || text.isBlank()) {
+                    // Ensure UI always receives a question
+                    return generateFallbackQuestion(role, topic, difficulty, questionType, interviewType);
+                }
                 return text;
             } else {
-                log.warn("Grok returned empty or quota exceeded for generateQuestion");
-                return "";
+                log.warn("Provider returned empty/quota for generateQuestion — using fallback");
+                return generateFallbackQuestion(role, topic, difficulty, questionType, interviewType);
             }
         } catch (Exception e) {
-            log.warn("Grok question generation failed: {}", e.getMessage());
-            return "";
+            log.warn("Question generation failed: {} — using fallback", e.getMessage());
+            return generateFallbackQuestion(role, topic, difficulty, questionType, interviewType);
         }
     }
 
@@ -187,14 +191,19 @@ public class AiService {
                 response = sendGrokWithRetries(messages, Map.of("model", "grok-beta", "response_format", "json_object"));
             }
             if (response != null && !response.isBlank() && !response.startsWith("ERROR_QUOTA_EXCEEDED:")) {
-                log.debug("Evaluated answer via Grok for role: {}, question type: {}", role, questionType);
-                return cleanJsonResponse(response);
+                log.debug("Evaluated answer via provider for role: {}, question type: {}", role, questionType);
+                String cleaned = cleanJsonResponse(response);
+                if (hasEvalFields(cleaned)) {
+                    return cleaned;
+                }
+                log.warn("Provider returned non-structured evaluation — using fallback");
+                return evaluateFallback(question, userAnswer, questionType, topicContext);
             } else {
-                log.warn("Grok returned empty or quota exceeded for evaluateAnswer — using local evaluation fallback");
+                log.warn("Provider returned empty/quota for evaluateAnswer — using local evaluation fallback");
                 return evaluateFallback(question, userAnswer, questionType, topicContext);
             }
         } catch (Exception e) {
-            log.warn("Grok evaluation failed: {}. Using local fallback.", e.getMessage());
+            log.warn("Evaluation failed: {}. Using local fallback.", e.getMessage());
             return evaluateFallback(question, userAnswer, questionType, topicContext);
         }
     }
@@ -247,14 +256,19 @@ public class AiService {
                 response = sendGrokWithRetries(messages, Map.of("model", "grok-beta"));
             }
             if (response != null && !response.isBlank() && !response.startsWith("ERROR_QUOTA_EXCEEDED:")) {
-                log.debug("Evaluated coding solution via Grok for role: {}", role);
-                return cleanJsonResponse(response);
+                log.debug("Evaluated coding solution via provider for role: {}", role);
+                String cleaned = cleanJsonResponse(response);
+                if (hasEvalFields(cleaned)) {
+                    return cleaned;
+                }
+                log.warn("Provider returned non-structured coding evaluation — using fallback");
+                return evaluateCodingFallback(problem, code, output, hiddenTestsDescription);
             } else {
-                log.warn("Grok returned empty or quota exceeded for evaluateCodingSolution — using local evaluation fallback");
+                log.warn("Provider returned empty/quota for evaluateCodingSolution — using local evaluation fallback");
                 return evaluateCodingFallback(problem, code, output, hiddenTestsDescription);
             }
         } catch (Exception e) {
-            log.warn("Grok coding evaluation failed: {}. Using local fallback.", e.getMessage());
+            log.warn("Coding evaluation failed: {}. Using local fallback.", e.getMessage());
             return evaluateCodingFallback(problem, code, output, hiddenTestsDescription);
         }
     }
@@ -450,6 +464,20 @@ public class AiService {
             String extracted = extractFirstJsonObject(cleaned);
             if (extracted != null) return extracted;
             return "{}";
+        }
+    }
+
+    private boolean hasEvalFields(String json) {
+        if (json == null || json.isBlank()) return false;
+        try {
+            var node = mapper.readTree(json);
+            boolean hasScore = node.has("score") && node.get("score").isNumber();
+            boolean hasFeedback = node.has("feedback") && !node.get("feedback").isNull();
+            boolean hasIsCorrect = node.has("is_correct") && node.get("is_correct").isBoolean();
+            boolean hasCorrectAnswer = node.has("correct_answer") && !node.get("correct_answer").isNull();
+            return hasScore || hasFeedback || (hasIsCorrect && hasCorrectAnswer);
+        } catch (Exception e) {
+            return false;
         }
     }
 

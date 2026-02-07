@@ -60,7 +60,7 @@ export default function SessionHistory() {
                   <td className="py-3 pr-4">{s.roleSnapshot || '—'}</td>
                   <td className="py-3 pr-4">{s.sessionType || '—'}</td>
                   <td className="py-3 pr-4">{s.topic || '—'}</td>
-                  <td className="py-3 pr-4">{s.score != null ? s.score + '%' : '—'}</td>
+                  <td className="py-3 pr-4">{s.score != null ? `${Math.round(s.score * 10)}%` : '—'}</td>
                   <td className="py-3">{s.totalQuestions ?? 0}</td>
                 </tr>
               ))}

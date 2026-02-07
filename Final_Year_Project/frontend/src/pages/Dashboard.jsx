@@ -56,7 +56,7 @@ export default function Dashboard() {
             </div>
             <div className="bg-surface-800/80 border border-slate-700 rounded-xl p-4">
               <p className="text-slate-400 text-sm">Average score</p>
-              <p className="text-2xl font-bold text-primary-400 mt-1">{stats.averageScore?.toFixed(1) ?? 0}%</p>
+              <p className="text-2xl font-bold text-primary-400 mt-1">{(stats.averageScore != null ? stats.averageScore.toFixed(1) : '0.0')}/10</p>
             </div>
           </div>
 
@@ -67,7 +67,7 @@ export default function Dashboard() {
                 {topicScores.map((t) => (
                   <li key={t.topic} className="flex justify-between items-center text-sm">
                     <span className="text-slate-300">{t.topic}</span>
-                    <span className="text-primary-400 font-medium">{t.averageScore?.toFixed(0) ?? 0}%</span>
+                    <span className="text-primary-400 font-medium">{(t.averageScore != null ? t.averageScore.toFixed(1) : '0.0')}/10</span>
                   </li>
                 ))}
               </ul>
