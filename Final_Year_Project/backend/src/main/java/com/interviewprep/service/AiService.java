@@ -71,6 +71,9 @@ public class AiService {
             Map<String, String> options = Map.of("model", "grok-beta", "temperature", String.valueOf(temperature));
             String response = sendGrokWithRetries(messages, options);
             if (response != null && !response.isBlank()) {
+                if (response.startsWith("ERROR_QUOTA_EXCEEDED:")) {
+                    return response; // Return error as the question text so user sees it
+                }
                 log.debug("Generated question via Grok for role: {}, topic: {}, type: {}", role, topic, questionType);
                 String text = response.trim();
                 if ("MCQ".equalsIgnoreCase(questionType)) {
@@ -166,6 +169,9 @@ public class AiService {
 
             String response = sendGrokWithRetries(messages, Map.of("model", "grok-beta"));
             if (response != null && !response.isBlank()) {
+                if (response.startsWith("ERROR_QUOTA_EXCEEDED:")) {
+                    return "{\"feedback\": \"" + response + "\", \"score\": 0.0, \"is_correct\": false}";
+                }
                 log.debug("Evaluated answer via Grok for role: {}, question type: {}", role, questionType);
                 return cleanJsonResponse(response);
             } else {
@@ -189,6 +195,9 @@ public class AiService {
 
             String response = sendGrokWithRetries(messages, Map.of("model", "grok-beta"));
             if (response != null && !response.isBlank()) {
+                if (response.startsWith("ERROR_QUOTA_EXCEEDED:")) {
+                    return response;
+                }
                 log.debug("Generated coding problem via Grok for role: {}, topic: {}", role, topic);
                 return response.trim();
             }
@@ -216,6 +225,9 @@ public class AiService {
 
             String response = sendGrokWithRetries(messages, Map.of("model", "grok-beta"));
             if (response != null && !response.isBlank()) {
+                if (response.startsWith("ERROR_QUOTA_EXCEEDED:")) {
+                    return "{\"feedback\": \"" + response + "\", \"score\": 0.0}";
+                }
                 log.debug("Evaluated coding solution via Grok for role: {}", role);
                 return cleanJsonResponse(response);
             } else {
@@ -233,15 +245,28 @@ public class AiService {
      */
     private String sendGrokWithRetries(List<Map<String, String>> messages, Map<String, String> options) {
         int attempt = 0;
+        String lastError = null;
+
         while (attempt < Math.max(1, grokMaxRetries)) {
             attempt++;
             try {
                 log.debug("Calling Grok (attempt {}/{}) with timeout {}s", attempt, grokMaxRetries, grokTimeoutSeconds);
                 // Ensure options include model; send options through so temperature and others are honored
                 String result = sendGrokRequest(messages, options);
+                
+                // If result is a special error indicator from sendGrokRequest, return it or handle it
+                if (result != null && result.startsWith("ERROR_QUOTA_EXCEEDED:")) {
+                     return result;
+                }
+                
                 if (result != null) return result;
             } catch (Exception e) {
+                lastError = e.getMessage();
                 log.warn("Grok call failed on attempt {}/{}: {}", attempt, grokMaxRetries, e.getMessage());
+                // If 403 or quota error, stop retrying immediately
+                if (e.getMessage().contains("403") || e.getMessage().contains("Quota") || e.getMessage().contains("credits")) {
+                     return "ERROR_QUOTA_EXCEEDED: Your xAI API key has no credits/licenses. Please verify billing at console.x.ai.";
+                }
             }
 
             if (attempt < grokMaxRetries) {
@@ -253,7 +278,7 @@ public class AiService {
                 }
             }
         }
-        log.warn("All {} Grok attempts failed/timeout", grokMaxRetries);
+        log.warn("All {} Grok attempts failed/timeout. Last error: {}", grokMaxRetries, lastError);
         return null;
     }
 
@@ -303,22 +328,43 @@ public class AiService {
 
                 respBody = req.bodyValue(payload)
                     .retrieve()
+                    .onStatus(status -> status.value() == 403 || status.value() == 401, response -> {
+                        return response.bodyToMono(String.class).flatMap(body -> {
+                            log.error("Grok Auth Error {}: {}", response.statusCode(), body);
+                            return reactor.core.publisher.Mono.error(new RuntimeException("Quota Exceeded or Invalid Key (403/401)"));
+                        });
+                    })
                     .bodyToMono(String.class)
                     .block(Duration.ofSeconds(Math.max(1, grokTimeoutSeconds)));
         } catch (Exception we) {
             log.warn("WebClient call to Grok failed: {}", we.getMessage());
+            
+            // If it's the quota error, throw it up so the retry loop catches it and returns the special message
+            if (we.getMessage().contains("Quota") || we.getMessage().contains("403")) {
+                throw we;
+            }
+
             // try a direct HttpClient as a secondary attempt in case WebClient is misbehaving
             try {
                 respBody = tryHttpClientRequest(payload);
                 log.debug("Grok response via HttpClient fallback: {}", respBody == null ? "<null>" : "(body len=" + respBody.length() + ")");
             } catch (Exception he) {
                 log.warn("HttpClient fallback to Grok failed: {}", he.getMessage());
+                if (he.getMessage().contains("403") || he.getMessage().contains("Quota")) {
+                     throw new RuntimeException("Quota Exceeded (403)");
+                }
             }
         }
 
         if (respBody == null) {
             log.warn("Grok returned empty body");
             return null;
+        }
+
+        // Check if body contains error structure even with 200 OK (unlikely but possible)
+        if (respBody.contains("\"error\"") && respBody.contains("\"code\"")) {
+             log.warn("Grok returned error in body: {}", respBody);
+             return null;
         }
 
         log.debug("Grok response body: {}", respBody);
