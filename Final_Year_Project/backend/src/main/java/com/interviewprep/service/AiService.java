@@ -43,6 +43,16 @@ public class AiService {
 
     @Value("${spring.ai.grok.base-url:https://api.x.ai}")
     private String grokBaseUrl;
+    @Value("${app.ai.provider:AUTODETECT}")
+    private String aiProvider;
+    @Value("${app.hf.api-token:}")
+    private String hfApiToken;
+    @Value("${app.hf.model.question:google/flan-t5-large}")
+    private String hfQuestionModel;
+    @Value("${app.hf.model.eval:mistralai/Mistral-7B-Instruct-v0.2}")
+    private String hfEvalModel;
+    @Value("${app.hf.model.code:bigcode/starcoder}")
+    private String hfCodeModel;
     
     public AiService(WebClient.Builder webClientBuilder) {
         this.webClient = webClientBuilder.build();
@@ -68,8 +78,13 @@ public class AiService {
 
             // Add a randomized temperature to encourage diversity from the LLM provider
             double temperature = 0.7 + ThreadLocalRandom.current().nextDouble() * 0.2; // 0.7 - 0.9
-            Map<String, String> options = Map.of("model", "grok-beta", "temperature", String.valueOf(temperature));
-            String response = sendGrokWithRetries(messages, options);
+            String response;
+            if (shouldUseHf()) {
+                response = callHf(hfQuestionModel, systemPrompt + "\n\n" + userPrompt, temperature, false);
+            } else {
+                Map<String, String> options = Map.of("model", "grok-beta", "temperature", String.valueOf(temperature));
+                response = sendGrokWithRetries(messages, options);
+            }
             if (response != null && !response.isBlank() && !response.startsWith("ERROR_QUOTA_EXCEEDED:")) {
                 log.debug("Generated question via Grok for role: {}, topic: {}, type: {}", role, topic, questionType);
                 String text = response.trim();
@@ -165,7 +180,12 @@ public class AiService {
                             PromptTemplates.evaluateAnswerPrompt(questionType, topicContext, question, userAnswer))
             );
 
-            String response = sendGrokWithRetries(messages, Map.of("model", "grok-beta", "response_format", "json_object"));
+            String response;
+            if (shouldUseHf()) {
+                response = callHf(hfEvalModel, systemPrompt + "\n\n" + PromptTemplates.evaluateAnswerPrompt(questionType, topicContext, question, userAnswer), 0.2, true);
+            } else {
+                response = sendGrokWithRetries(messages, Map.of("model", "grok-beta", "response_format", "json_object"));
+            }
             if (response != null && !response.isBlank() && !response.startsWith("ERROR_QUOTA_EXCEEDED:")) {
                 log.debug("Evaluated answer via Grok for role: {}, question type: {}", role, questionType);
                 return cleanJsonResponse(response);
@@ -188,7 +208,12 @@ public class AiService {
                             PromptTemplates.generateCodingProblemPrompt(topic, difficulty))
             );
 
-            String response = sendGrokWithRetries(messages, Map.of("model", "grok-beta", "response_format", "json_object"));
+            String response;
+            if (shouldUseHf()) {
+                response = callHf(hfQuestionModel, systemPrompt + "\n\n" + PromptTemplates.generateCodingProblemPrompt(topic, difficulty), 0.3, false);
+            } else {
+                response = sendGrokWithRetries(messages, Map.of("model", "grok-beta", "response_format", "json_object"));
+            }
             if (response != null && !response.isBlank() && !response.startsWith("ERROR_QUOTA_EXCEEDED:")) {
                 log.debug("Generated coding problem via Grok for role: {}, topic: {}", role, topic);
                 return response.trim();
@@ -215,7 +240,12 @@ public class AiService {
                             PromptTemplates.evaluateCodingSolutionPrompt(problem, code, output, hiddenTestsDescription))
             );
 
-            String response = sendGrokWithRetries(messages, Map.of("model", "grok-beta"));
+            String response;
+            if (shouldUseHf()) {
+                response = callHf(hfCodeModel, systemPrompt + "\n\n" + PromptTemplates.evaluateCodingSolutionPrompt(problem, code, output, hiddenTestsDescription), 0.2, true);
+            } else {
+                response = sendGrokWithRetries(messages, Map.of("model", "grok-beta"));
+            }
             if (response != null && !response.isBlank() && !response.startsWith("ERROR_QUOTA_EXCEEDED:")) {
                 log.debug("Evaluated coding solution via Grok for role: {}", role);
                 return cleanJsonResponse(response);
@@ -494,6 +524,64 @@ public class AiService {
         // Remove leading Role: prefix (e.g., "Java Full Stack Developer: ")
         t = t.replaceFirst("^\\s*[^:\\n]{3,50}:\\s+", "");
         return t.trim();
+    }
+
+    private boolean shouldUseHf() {
+        String envProvider = System.getenv("AI_PROVIDER");
+        String provider = aiProvider != null ? aiProvider : "AUTODETECT";
+        String resolved = envProvider != null && !envProvider.isBlank() ? envProvider : provider;
+        String token = System.getenv("HF_API_TOKEN");
+        if (token == null || token.isBlank()) token = hfApiToken;
+        return "HF".equalsIgnoreCase(resolved) || (token != null && !token.isBlank());
+    }
+
+    private String callHf(String model, String prompt, double temperature, boolean wantJson) {
+        try {
+            String tokenEnv = System.getenv("HF_API_TOKEN");
+            String resolvedToken = (tokenEnv == null || tokenEnv.isBlank()) ? hfApiToken : tokenEnv;
+            if (resolvedToken == null || resolvedToken.isBlank()) return null;
+            final String bearerToken = resolvedToken;
+            String url = "https://api-inference.huggingface.co/models/" + model;
+            java.util.Map<String, Object> body = new java.util.HashMap<>();
+            body.put("inputs", prompt);
+            java.util.Map<String, Object> params = new java.util.HashMap<>();
+            params.put("max_new_tokens", 400);
+            params.put("temperature", temperature);
+            params.put("do_sample", temperature > 0.0);
+            params.put("return_full_text", false);
+            body.put("parameters", params);
+            String resp = webClient.post()
+                    .uri(URI.create(url))
+                    .headers(h -> h.setBearerAuth(bearerToken))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(body)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block(Duration.ofSeconds(Math.max(1, grokTimeoutSeconds)));
+            if (resp == null || resp.isBlank()) return null;
+            Object parsed = mapper.readValue(resp, Object.class);
+            String text = null;
+            if (parsed instanceof java.util.List l && !l.isEmpty()) {
+                Object first = l.get(0);
+                if (first instanceof java.util.Map fm) {
+                    Object gt = fm.get("generated_text");
+                    if (gt != null) text = String.valueOf(gt);
+                } else if (first instanceof String s) {
+                    text = s;
+                }
+            } else if (parsed instanceof java.util.Map m) {
+                Object gt = m.get("generated_text");
+                if (gt != null) text = String.valueOf(gt);
+            } else if (parsed instanceof String s) {
+                text = s;
+            }
+            if (text == null) text = resp;
+            if (wantJson) return cleanJsonResponse(text);
+            return text;
+        } catch (Exception e) {
+            log.warn("HF call failed: {}", e.getMessage());
+            return null;
+        }
     }
 
     // --- Local evaluation fallbacks ---
