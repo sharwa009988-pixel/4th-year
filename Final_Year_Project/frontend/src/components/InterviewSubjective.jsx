@@ -45,7 +45,11 @@ export default function InterviewSubjective({ sessionId, mode, topic, difficulty
     setLoadingQuestion(true);
     try {
       const res = await interviewApi.generateQuestion(mode, topic, difficulty);
-      setQuestion(res.question || '');
+      let q = String(res.question || '');
+      q = q.replace(/^\\s*\\((?:MCQ|SUBJECTIVE|CODING|BEHAVIORAL)\\)\\s*/i, '');
+      q = q.replace(/^\\s*\\[(?:EASY|MEDIUM|HARD)\\]\\s*/i, '');
+      q = q.replace(/^\\s*[^:\\n]{3,50}:\\s+/i, '');
+      setQuestion(q);
       setQuestionId(res.questionId || null);
     } catch (e) {
       setError(e.message || 'Failed to generate question');

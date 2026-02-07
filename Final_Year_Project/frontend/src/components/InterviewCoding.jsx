@@ -151,14 +151,7 @@ export default function InterviewCoding({ sessionId, onEnd, onBack }) {
           {fb.improvementSuggestions && <p className="text-slate-200">Improvement Suggestions: {fb.improvementSuggestions}</p>}
         </div>
       )}
-      {newProb && (
-        <div className="bg-surface-800/80 border border-slate-700 rounded-xl p-6">
-          <h3 className="text-lg font-medium text-primary-300 mb-2">Next Problem</h3>
-          <p className="text-slate-200 font-semibold">{newProb.title}</p>
-          <p className="text-slate-200 whitespace-pre-wrap mt-1">{newProb.description}</p>
-          <p className="text-slate-400 text-sm mt-2">Difficulty: {newProb.difficulty} • Topics: {(newProb.topics||[]).join(', ')}</p>
-        </div>
-      )}
+      {/* Next Problem intentionally hidden */}
     </div>
   );
 }
