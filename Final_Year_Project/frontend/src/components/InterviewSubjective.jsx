@@ -68,9 +68,7 @@ export default function InterviewSubjective({ sessionId, mode, topic, difficulty
     try {
       const res = await interviewApi.evaluate(questionId, question, userAnswer, sessionId, mode, topic, difficulty);
       setFb(res.feedback || null);
-      if (String(mode).toUpperCase() !== 'FULL_MOCK') {
-        setSuggested(res.newQuestion || null);
-      }
+      setSuggested(null);
     } catch (e) {
       setError(e.message || 'Failed to evaluate');
     } finally {
@@ -154,8 +152,17 @@ export default function InterviewSubjective({ sessionId, mode, topic, difficulty
       {fb && (
         <div className="bg-surface-800/80 border border-slate-700 rounded-xl p-6">
           <h3 className="text-lg font-medium text-primary-300 mb-2">AI Feedback</h3>
-          <p className="text-slate-300 mb-2">Question: <span className="text-white">{question}</span></p>
+          <p className="text-slate-300 mb-2">Question: <span className="text-white">
+            {String(question)
+              .replace(/^\s*\((?:MCQ|SUBJECTIVE|CODING|BEHAVIORAL)\)\s*/i, '')
+              .replace(/^\s*\[(?:EASY|MEDIUM|HARD)\]\s*/i, '')
+              .replace(/^\s*[^:\n]{3,50}:\s+/i, '')
+            }
+          </span></p>
           <p className="text-slate-300 mb-2">Candidate Answer: <span className="text-white">{fb.candidateAnswer}</span></p>
+          {typeof fb.isCorrect !== 'undefined' && (
+            <p className="text-slate-300 mb-2">Correctness: <span className="text-white">{fb.isCorrect ? 'Correct' : 'Incorrect'}</span></p>
+          )}
           {fb.correctAnswer && (
             <p className="text-slate-300 mb-2">Correct Answer: <span className="text-white">{fb.correctAnswer}</span></p>
           )}
@@ -169,13 +176,7 @@ export default function InterviewSubjective({ sessionId, mode, topic, difficulty
           )}
         </div>
       )}
-      {String(mode).toUpperCase() !== 'FULL_MOCK' && String(mode).toUpperCase() !== 'MCQ' && suggested && suggested.question && (
-        <div className="bg-surface-800/80 border border-slate-700 rounded-xl p-6">
-          <h3 className="text-lg font-medium text-primary-300 mb-2">Next Question</h3>
-          <p className="text-slate-200 whitespace-pre-wrap mb-2">{suggested.question}</p>
-          <p className="text-slate-400 text-sm">Type: {suggested.type} • Difficulty: {suggested.difficulty}</p>
-        </div>
-      )}
+      
     </div>
   );
 }

@@ -416,9 +416,9 @@ app.post('/api/interview/evaluate', (req, res) => {
         }
       }).catch(() => res.status(502).json({ message: 'AI evaluation failed' }));
     } else {
-      const schema = `{"feedback":{"candidateAnswer":string,"correctAnswer":string,"score":number,"explanation":string,"mistakes":string,"example":string},"newQuestion":{"question":string,"type":string,"difficulty":string}}`;
-      const sysE = 'Return ONLY JSON per schema. Provide a real 3-5 line correct answer; technical explanation; mistake analysis; concise example.';
-      const promptE = `Role: ${saved.role || ''}\nType: SUBJECTIVE\nDifficulty: ${(difficulty||'MEDIUM')}\nQuestion:\n${questionText}\nCandidate Answer:\n${userAnswer}\nEvaluate and respond per schema.`;
+      const schema = `{"feedback":{"candidateAnswer":string,"isCorrect":boolean,"correctAnswer":string,"score":number,"explanation":string,"mistakes":string,"example":string},"newQuestion":{"question":string,"type":string,"difficulty":string}}`;
+      const sysE = 'Return ONLY JSON per schema. First judge if the candidateAnswer is correct for the question; then provide a concise 3-5 line correctAnswer; then explanation; mistake analysis; concise example.';
+      const promptE = `Role: ${saved.role || ''}\nType: SUBJECTIVE\nDifficulty: ${(difficulty||'MEDIUM')}\nQuestion:\n${questionText}\nCandidate Answer:\n${userAnswer}\nEvaluate and respond per schema strictly.`;
       grokJson(sysE, promptE, schema, 0.2).then(parsed => {
         if (parsed && parsed.feedback && parsed.newQuestion) {
           res.json(parsed);
@@ -429,6 +429,7 @@ app.post('/api/interview/evaluate', (req, res) => {
           res.json({
             feedback: {
               candidateAnswer: ans,
+              isCorrect: false,
               correctAnswer: 'Concise 3-5 line ideal answer covering core concepts.',
               score,
               explanation: 'Provide role-specific fundamentals and justify choices.',
@@ -449,6 +450,7 @@ app.post('/api/interview/evaluate', (req, res) => {
         res.json({
           feedback: {
             candidateAnswer: ans,
+            isCorrect: false,
             correctAnswer: 'Concise 3-5 line ideal answer covering core concepts.',
             score,
             explanation: 'Provide role-specific fundamentals and justify choices.',
