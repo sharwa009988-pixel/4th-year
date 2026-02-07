@@ -102,20 +102,20 @@ export default function InterviewSubjective({ sessionId, mode, topic, difficulty
           (() => {
             const parsed = parseMcq(question);
             return (
-              <div className="mb-4 space-y-3 bg-surface-900/50 p-4 rounded-lg border border-slate-700/50">
-                <p className="text-slate-200 font-medium text-lg">{parsed.stem}</p>
-                <div className="space-y-2 mt-4">
+              <div className="mb-4 space-y-3">
+                <p className="text-slate-200">{parsed.stem}</p>
+                <div className="space-y-2">
                   {parsed.options.map(opt => (
-                    <label key={opt.key} className="flex items-center gap-3 text-slate-200 p-2 hover:bg-surface-800 rounded cursor-pointer transition-colors">
+                    <label key={opt.key} className="flex items-center gap-2 text-slate-200">
                       <input
                         type="radio"
                         name="mcq"
                         value={opt.key}
                         checked={selectedOption === opt.key}
                         onChange={(e) => setSelectedOption(e.target.value)}
-                        className="w-4 h-4 accent-primary-600"
+                        className="accent-primary-600"
                       />
-                      <span className="font-semibold text-primary-400">{opt.key})</span>
+                      <span className="font-semibold">{opt.key})</span>
                       <span>{opt.text}</span>
                     </label>
                   ))}
@@ -124,9 +124,7 @@ export default function InterviewSubjective({ sessionId, mode, topic, difficulty
             );
           })()
         ) : (
-          <div className="bg-surface-900/50 p-4 rounded-lg border border-slate-700/50 mb-4">
-            <p className="text-slate-200 whitespace-pre-wrap font-medium text-lg">{question}</p>
-          </div>
+          <p className="text-slate-200 whitespace-pre-wrap mb-4">{question}</p>
         )}
         {String(mode).toUpperCase() !== 'MCQ' && (
           <>

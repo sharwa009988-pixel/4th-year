@@ -43,12 +43,9 @@ public class AiService {
 
     @Value("${spring.ai.grok.base-url:https://api.x.ai}")
     private String grokBaseUrl;
-
-    private final OfflineQuestionBank offlineQuestionBank;
-
-    public AiService(WebClient.Builder webClientBuilder, OfflineQuestionBank offlineQuestionBank) {
+    
+    public AiService(WebClient.Builder webClientBuilder) {
         this.webClient = webClientBuilder.build();
-        this.offlineQuestionBank = offlineQuestionBank;
     }
 
     public String generateQuestion(String role,
@@ -81,12 +78,12 @@ public class AiService {
                 }
                 return text;
             } else {
-                log.warn("Grok returned empty or quota exceeded — using extended offline question bank");
-                return offlineQuestionBank.getRandomQuestion(topic, questionType, difficulty);
+                log.warn("Grok returned empty or quota exceeded for generateQuestion");
+                return "";
             }
         } catch (Exception e) {
-            log.warn("Grok question generation failed: {}. Using fallback.", e.getMessage());
-            return offlineQuestionBank.getRandomQuestion(topic, questionType, difficulty);
+            log.warn("Grok question generation failed: {}", e.getMessage());
+            return "";
         }
     }
 
@@ -172,12 +169,12 @@ public class AiService {
                 log.debug("Evaluated answer via Grok for role: {}, question type: {}", role, questionType);
                 return cleanJsonResponse(response);
             } else {
-                log.warn("Grok returned empty or quota exceeded — using offline evaluation");
-                return offlineQuestionBank.getMockEvaluation(questionType);
+                log.warn("Grok returned empty or quota exceeded for evaluateAnswer — using local evaluation fallback");
+                return evaluateFallback(question, userAnswer, questionType, topicContext);
             }
         } catch (Exception e) {
             log.warn("Grok evaluation failed: {}. Using local fallback.", e.getMessage());
-            return offlineQuestionBank.getMockEvaluation(questionType);
+            return evaluateFallback(question, userAnswer, questionType, topicContext);
         }
     }
 
@@ -196,11 +193,11 @@ public class AiService {
                 return response.trim();
             }
             // If Grok returned empty, fall back to local generator so the UI remains usable
-            log.warn("Grok returned empty or quota exceeded — using offline coding problem");
-            return offlineQuestionBank.getRandomQuestion(topic, "CODING", difficulty);
+            log.warn("Grok returned empty or quota exceeded for generateCodingProblem");
+            return generateFallbackQuestion(role, topic, difficulty, "CODING", "INTERVIEW");
         } catch (Exception e) {
             log.warn("Grok coding problem generation failed: {}. Using fallback.", e.getMessage());
-            return offlineQuestionBank.getRandomQuestion(topic, "CODING", difficulty);
+            return generateFallbackQuestion(role, topic, difficulty, "CODING", "INTERVIEW");
         }
     }
 
@@ -222,12 +219,12 @@ public class AiService {
                 log.debug("Evaluated coding solution via Grok for role: {}", role);
                 return cleanJsonResponse(response);
             } else {
-                log.warn("Grok returned empty or quota exceeded — using offline coding evaluation");
-                return offlineQuestionBank.getMockCodingEvaluation();
+                log.warn("Grok returned empty or quota exceeded for evaluateCodingSolution — using local evaluation fallback");
+                return evaluateCodingFallback(problem, code, output, hiddenTestsDescription);
             }
         } catch (Exception e) {
             log.warn("Grok coding evaluation failed: {}. Using local fallback.", e.getMessage());
-            return offlineQuestionBank.getMockCodingEvaluation();
+            return evaluateCodingFallback(problem, code, output, hiddenTestsDescription);
         }
     }
 
