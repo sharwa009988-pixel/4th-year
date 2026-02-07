@@ -426,11 +426,72 @@ app.post('/api/interview/evaluate', (req, res) => {
           const ans = String(userAnswer||'').trim();
           const hasContent = ans.length > 20;
           const score = hasContent ? 60 : 30;
+          const sysCA = 'Return ONLY plain text. Provide a concise real interview-grade correct answer (4-8 sentences) for the question.';
+          const promptCA = `Question:\n${questionText}\nRole: ${saved.role || ''}`;
+          const sysJudge = 'Return ONLY "Correct" or "Incorrect". Decide if the candidate answer sufficiently answers the question.';
+          const promptJudge = `Question:\n${questionText}\nCandidate Answer:\n${userAnswer}`;
+          Promise.all([
+            grokChat(sysCA, promptCA, 0.2),
+            grokChat(sysJudge, promptJudge, 0.2)
+          ]).then(([ca, judge]) => {
+            const caText = String(ca || '').replace(/\\n/g,'\n').trim();
+            const jText = String(judge || '').trim().toLowerCase();
+            const isCorrect = jText.startsWith('correct');
+            res.json({
+              feedback: {
+                candidateAnswer: ans,
+                isCorrect,
+                correctAnswer: caText || 'A concise role-appropriate answer covering core concepts.',
+                score,
+                explanation: 'Provide role-specific fundamentals and justify choices.',
+                mistakes: hasContent ? 'Missing specifics and trade-offs.' : 'Answer too brief; lacks key points.',
+                example: 'Outline a short, concrete scenario.'
+              },
+              newQuestion: {
+                question: 'Explain how to secure REST APIs in Spring Boot.',
+                type: 'SUBJECTIVE',
+                difficulty: (difficulty||'MEDIUM')
+              }
+            });
+          }).catch(() => {
+            res.json({
+              feedback: {
+                candidateAnswer: ans,
+                isCorrect: false,
+                correctAnswer: 'A concise role-appropriate answer covering core concepts.',
+                score,
+                explanation: 'Provide role-specific fundamentals and justify choices.',
+                mistakes: hasContent ? 'Missing specifics and trade-offs.' : 'Answer too brief; lacks key points.',
+                example: 'Outline a short, concrete scenario.'
+              },
+              newQuestion: {
+                question: 'Explain how to secure REST APIs in Spring Boot.',
+                type: 'SUBJECTIVE',
+                difficulty: (difficulty||'MEDIUM')
+              }
+            });
+          });
+        }
+      }).catch(() => {
+        const ans = String(userAnswer||'').trim();
+        const hasContent = ans.length > 20;
+        const score = hasContent ? 60 : 30;
+        const sysCA = 'Return ONLY plain text. Provide a concise real interview-grade correct answer (4-8 sentences) for the question.';
+        const promptCA = `Question:\n${questionText}\nRole: ${saved.role || ''}`;
+        const sysJudge = 'Return ONLY "Correct" or "Incorrect". Decide if the candidate answer sufficiently answers the question.';
+        const promptJudge = `Question:\n${questionText}\nCandidate Answer:\n${userAnswer}`;
+        Promise.all([
+          grokChat(sysCA, promptCA, 0.2),
+          grokChat(sysJudge, promptJudge, 0.2)
+        ]).then(([ca, judge]) => {
+          const caText = String(ca || '').replace(/\\n/g,'\n').trim();
+          const jText = String(judge || '').trim().toLowerCase();
+          const isCorrect = jText.startsWith('correct');
           res.json({
             feedback: {
               candidateAnswer: ans,
-              isCorrect: false,
-              correctAnswer: 'Concise 3-5 line ideal answer covering core concepts.',
+              isCorrect,
+              correctAnswer: caText || 'A concise role-appropriate answer covering core concepts.',
               score,
               explanation: 'Provide role-specific fundamentals and justify choices.',
               mistakes: hasContent ? 'Missing specifics and trade-offs.' : 'Answer too brief; lacks key points.',
@@ -442,26 +503,23 @@ app.post('/api/interview/evaluate', (req, res) => {
               difficulty: (difficulty||'MEDIUM')
             }
           });
-        }
-      }).catch(() => {
-        const ans = String(userAnswer||'').trim();
-        const hasContent = ans.length > 20;
-        const score = hasContent ? 60 : 30;
-        res.json({
-          feedback: {
-            candidateAnswer: ans,
-            isCorrect: false,
-            correctAnswer: 'Concise 3-5 line ideal answer covering core concepts.',
-            score,
-            explanation: 'Provide role-specific fundamentals and justify choices.',
-            mistakes: hasContent ? 'Missing specifics and trade-offs.' : 'Answer too brief; lacks key points.',
-            example: 'Outline a short, concrete scenario.'
-          },
-          newQuestion: {
-            question: 'Explain how to secure REST APIs in Spring Boot.',
-            type: 'SUBJECTIVE',
-            difficulty: (difficulty||'MEDIUM')
-          }
+        }).catch(() => {
+          res.json({
+            feedback: {
+              candidateAnswer: ans,
+              isCorrect: false,
+              correctAnswer: 'A concise role-appropriate answer covering core concepts.',
+              score,
+              explanation: 'Provide role-specific fundamentals and justify choices.',
+              mistakes: hasContent ? 'Missing specifics and trade-offs.' : 'Answer too brief; lacks key points.',
+              example: 'Outline a short, concrete scenario.'
+            },
+            newQuestion: {
+              question: 'Explain how to secure REST APIs in Spring Boot.',
+              type: 'SUBJECTIVE',
+              difficulty: (difficulty||'MEDIUM')
+            }
+          });
         });
       });
     }
