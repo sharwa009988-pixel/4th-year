@@ -151,7 +151,7 @@ export default function InterviewCoding({ sessionId, onEnd, onBack }) {
           {fb.improvementSuggestions && <p className="text-slate-200">Improvement Suggestions: {fb.improvementSuggestions}</p>}
         </div>
       )}
-      {/* Next Problem intentionally hidden */}
+      
     </div>
   );
 }
