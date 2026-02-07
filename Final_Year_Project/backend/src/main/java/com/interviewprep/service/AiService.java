@@ -41,7 +41,7 @@ public class AiService {
     @Value("${app.grok.max-retries:2}")
     private int grokMaxRetries;
 
-    @Value("${spring.ai.grok.base-url:https://api.grok.x.ai}")
+    @Value("${spring.ai.grok.base-url:https://api.x.ai}")
     private String grokBaseUrl;
 
     public AiService(WebClient.Builder webClientBuilder) {
@@ -67,8 +67,8 @@ public class AiService {
             );
 
             // Add a randomized temperature to encourage diversity from the LLM provider
-            double temperature = 0.3 + ThreadLocalRandom.current().nextDouble() * 0.6; // 0.3 - 0.9
-            Map<String, String> options = Map.of("model", "grokxai", "temperature", String.valueOf(temperature));
+            double temperature = 0.7 + ThreadLocalRandom.current().nextDouble() * 0.2; // 0.7 - 0.9
+            Map<String, String> options = Map.of("model", "grok-beta", "temperature", String.valueOf(temperature));
             String response = sendGrokWithRetries(messages, options);
             if (response != null && !response.isBlank()) {
                 log.debug("Generated question via Grok for role: {}, topic: {}, type: {}", role, topic, questionType);
@@ -164,7 +164,7 @@ public class AiService {
                             PromptTemplates.evaluateAnswerPrompt(questionType, topicContext, question, userAnswer))
             );
 
-            String response = sendGrokWithRetries(messages, Map.of("model", "grokxai"));
+            String response = sendGrokWithRetries(messages, Map.of("model", "grok-beta"));
             if (response != null && !response.isBlank()) {
                 log.debug("Evaluated answer via Grok for role: {}, question type: {}", role, questionType);
                 return cleanJsonResponse(response);
@@ -187,7 +187,7 @@ public class AiService {
                             PromptTemplates.generateCodingProblemPrompt(topic, difficulty))
             );
 
-            String response = sendGrokWithRetries(messages, Map.of("model", "grokxai"));
+            String response = sendGrokWithRetries(messages, Map.of("model", "grok-beta"));
             if (response != null && !response.isBlank()) {
                 log.debug("Generated coding problem via Grok for role: {}, topic: {}", role, topic);
                 return response.trim();
@@ -214,7 +214,7 @@ public class AiService {
                             PromptTemplates.evaluateCodingSolutionPrompt(problem, code, output, hiddenTestsDescription))
             );
 
-            String response = sendGrokWithRetries(messages, Map.of("model", "grokxai"));
+            String response = sendGrokWithRetries(messages, Map.of("model", "grok-beta"));
             if (response != null && !response.isBlank()) {
                 log.debug("Evaluated coding solution via Grok for role: {}", role);
                 return cleanJsonResponse(response);
@@ -263,20 +263,11 @@ public class AiService {
      */
     @SuppressWarnings("unchecked")
     private String sendGrokRequest(List<Map<String, String>> messages, Map<String, String> options) throws IOException {
-        String model = options.getOrDefault("model", "grokxai");
-
-        // Build payload for Grok; many hosted LLM APIs accept an `input` or `prompt` field
-        StringBuilder prompt = new StringBuilder();
-        // Convert messages into a simple prompt string
-        for (Map<String, String> m : messages) {
-            String role = m.getOrDefault("role", "user");
-            String content = m.getOrDefault("content", "");
-            prompt.append(role).append(": ").append(content).append("\n");
-        }
+        String model = options.getOrDefault("model", "grok-beta");
 
         Map<String, Object> payload = Map.of(
                 "model", model,
-                "input", prompt.toString(),
+                "messages", messages,
                 "stream", false
         );
 
@@ -296,13 +287,18 @@ public class AiService {
         String respBody = null;
         try {
                 WebClient.RequestBodySpec req = webClient.post()
-                    .uri(URI.create(grokBaseUrl.replaceAll("/+$", "") + "/v1/generate"))
+                    .uri(URI.create(grokBaseUrl.replaceAll("/+$", "") + "/v1/chat/completions"))
                     .contentType(MediaType.APPLICATION_JSON);
 
                 // Add Authorization header from environment if available
-                String apiKey = System.getenv("GROK_API_KEY");
+                String apiKey = System.getenv("X_API_KEY");
+                if (apiKey == null || apiKey.isBlank()) {
+                    apiKey = System.getenv("GROK_API_KEY");
+                }
+                
                 if (apiKey != null && !apiKey.isBlank()) {
-                req = req.headers(h -> h.setBearerAuth(apiKey));
+                    String finalKey = apiKey;
+                    req = req.headers(h -> h.setBearerAuth(finalKey));
                 }
 
                 respBody = req.bodyValue(payload)
@@ -326,22 +322,10 @@ public class AiService {
         }
 
         log.debug("Grok response body: {}", respBody);
-        System.out.println("RAW GROK RESPONSE: " + respBody);
 
         Map<String, Object> map = mapper.readValue(respBody, new TypeReference<>() {});
 
-        // Try common shapes: { "output": "..." } or { "text": "..." } or choices/data arrays
-        Object out = map.get("output");
-        if (out instanceof String s) return s;
-        Object text = map.get("text");
-        if (text instanceof String ts) return ts;
-
-        Object messageObj = map.get("message");
-        if (messageObj instanceof Map messageMap) {
-            Object content = messageMap.get("content");
-            if (content != null) return String.valueOf(content);
-        }
-
+        // Handle OpenAI-compatible response format (standard for xAI now)
         Object choicesObj = map.get("choices");
         if (choicesObj instanceof List choices && !choices.isEmpty()) {
             Object first = choices.get(0);
@@ -351,18 +335,24 @@ public class AiService {
                     Object content = msgMap.get("content");
                     if (content != null) return String.valueOf(content);
                 }
+                // Fallback for some non-standard responses
                 Object direct = firstMap.get("content");
                 if (direct != null) return String.valueOf(direct);
+                Object text = firstMap.get("text");
+                if (text != null) return String.valueOf(text);
             }
         }
+        
+        // Fallback for legacy/other formats
+        Object out = map.get("output");
+        if (out instanceof String s) return s;
+        Object text = map.get("text");
+        if (text instanceof String ts) return ts;
 
-        Object data = map.get("data");
-        if (data instanceof List dl && !dl.isEmpty()) {
-            Object first = dl.get(0);
-            if (first instanceof Map fm) {
-                Object t = fm.get("text");
-                if (t instanceof String) return (String) t;
-            }
+        Object messageObj = map.get("message");
+        if (messageObj instanceof Map messageMap) {
+            Object content = messageMap.get("content");
+            if (content != null) return String.valueOf(content);
         }
 
         // No recognized content found
@@ -393,13 +383,17 @@ public class AiService {
 
         String json = mapper.writeValueAsString(payload);
         HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
-                .uri(URI.create(grokBaseUrl.replaceAll("/+$", "") + "/v1/generate"))
+                .uri(URI.create(grokBaseUrl.replaceAll("/+$", "") + "/v1/chat/completions"))
                 .timeout(Duration.ofSeconds(Math.max(1, grokTimeoutSeconds)))
                 .header("Content-Type", "application/json")
                 ;
 
         // Add Authorization header if present
-        String apiKey = System.getenv("GROK_API_KEY");
+        String apiKey = System.getenv("X_API_KEY");
+        if (apiKey == null || apiKey.isBlank()) {
+            apiKey = System.getenv("GROK_API_KEY");
+        }
+        
         if (apiKey != null && !apiKey.isBlank()) {
             reqBuilder.header("Authorization", "Bearer " + apiKey);
         }

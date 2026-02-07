@@ -56,6 +56,7 @@ public class PromptTemplates {
                 - If CODING: provide problem statement with input/output format and 1-2 sample test cases
 
                 Output: only the question content to show to the candidate (no JSON, no markdown fences).
+                IMPORTANT: Do NOT include the role name, difficulty level, or question type tags (like [MEDIUM] or (MCQ)) in the output. Just the question text and options.
                 """, questionType, interviewType, topic, difficulty);
     }
 
