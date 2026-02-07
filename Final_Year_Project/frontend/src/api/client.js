@@ -24,6 +24,11 @@ axiosApi.interceptors.request.use((config) => {
       config.headers = config.headers || {};
       config.headers.Authorization = `Bearer ${token}`;
     }
+    const xaiKey = typeof window !== 'undefined' ? localStorage.getItem('xaiKey') : null;
+    if (xaiKey) {
+      config.headers = config.headers || {};
+      config.headers['X-Api-Key'] = xaiKey;
+    }
   } catch {}
   return config;
 });

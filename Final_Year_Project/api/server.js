@@ -449,13 +449,22 @@ app.post('/api/interview/evaluate', (req, res) => {
               }).catch(() => ({ finalCA, isCorrect }));
             }
             return { finalCA, isCorrect };
-          }).then(({ finalCA, isCorrect }) => {
+          }).then(async ({ finalCA, isCorrect }) => {
+            if (!isCorrect) {
+              const sysJudge2 = 'Return ONLY "Correct" or "Incorrect". Using the ideal answer as reference, decide if the candidate sufficiently covers the core points.';
+              const promptJudge2 = `Ideal Answer:\n${finalCA}\n\nCandidate Answer:\n${userAnswer}`;
+              const j2 = await grokChat(sysJudge2, promptJudge2, 0.2, key);
+              const j2Text = String(j2 || '').trim().toLowerCase();
+              if (j2Text.startsWith('correct')) isCorrect = true;
+            }
+            const hasContent = String(userAnswer||'').trim().length > 20;
+            const dynamicScore = isCorrect ? (hasContent ? 80 : 60) : (hasContent ? 60 : 30);
             res.json({
               feedback: {
                 candidateAnswer: ans,
                 isCorrect,
                 correctAnswer: finalCA || 'A concise role-appropriate answer covering core concepts.',
-                score,
+                score: dynamicScore,
                 explanation: 'Provide role-specific fundamentals and justify choices.',
                 mistakes: hasContent ? 'Missing specifics and trade-offs.' : 'Answer too brief; lacks key points.',
                 example: 'Outline a short, concrete scenario.'
@@ -499,14 +508,14 @@ app.post('/api/interview/evaluate', (req, res) => {
         ]).then(([ca, judge]) => {
           const caText = String(ca || '').replace(/\\n/g,'\n').trim();
           const jText = String(judge || '').trim().toLowerCase();
-          const isCorrect = jText.startsWith('correct');
+          let isCorrectVar = jText.startsWith('correct');
           let finalCA = caText;
           const finish = () => res.json({
             feedback: {
               candidateAnswer: ans,
-              isCorrect,
+              isCorrect: isCorrectVar,
               correctAnswer: finalCA || 'A concise role-appropriate answer covering core concepts.',
-              score,
+              score: isCorrectVar ? (hasContent ? 80 : 60) : (hasContent ? 60 : 30),
               explanation: 'Provide role-specific fundamentals and justify choices.',
               mistakes: hasContent ? 'Missing specifics and trade-offs.' : 'Answer too brief; lacks key points.',
               example: 'Outline a short, concrete scenario.'
@@ -522,10 +531,30 @@ app.post('/api/interview/evaluate', (req, res) => {
             const promptCA2 = `Question:\n${questionText}\nRole: ${saved.role || ''}`;
             grokChat(sysCA2, promptCA2, 0.5, key).then(ca2 => {
               finalCA = String(ca2 || '').replace(/\\n/g,'\n').trim() || finalCA;
-              finish();
+              if (!isCorrectVar) {
+                const sysJudge2 = 'Return ONLY "Correct" or "Incorrect". Using the ideal answer as reference, decide if the candidate sufficiently covers the core points.';
+                const promptJudge2 = `Ideal Answer:\n${finalCA}\n\nCandidate Answer:\n${userAnswer}`;
+                grokChat(sysJudge2, promptJudge2, 0.2, key).then(j2 => {
+                  const j2Text = String(j2 || '').trim().toLowerCase();
+                  if (j2Text.startsWith('correct')) isCorrectVar = true;
+                  finish();
+                }).catch(finish);
+              } else {
+                finish();
+              }
             }).catch(finish);
           } else {
-            finish();
+            if (!isCorrectVar) {
+              const sysJudge2 = 'Return ONLY "Correct" or "Incorrect". Using the ideal answer as reference, decide if the candidate sufficiently covers the core points.';
+              const promptJudge2 = `Ideal Answer:\n${finalCA}\n\nCandidate Answer:\n${userAnswer}`;
+              grokChat(sysJudge2, promptJudge2, 0.2, key).then(j2 => {
+                const j2Text = String(j2 || '').trim().toLowerCase();
+                if (j2Text.startsWith('correct')) isCorrectVar = true;
+                finish();
+              }).catch(finish);
+            } else {
+              finish();
+            }
           }
         }).catch(() => {
           res.json({
