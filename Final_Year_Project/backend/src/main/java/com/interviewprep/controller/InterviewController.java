@@ -64,6 +64,14 @@ public class InterviewController {
         String difficulty = req.getOrDefault("difficulty", "MEDIUM").toString();
 
         String questionText = aiService.generateQuestion(role, topic, difficulty, mode, mode);
+        if (questionText != null) {
+            // Sanitize any leading tags the model might include
+            questionText = questionText
+                    .replaceFirst("^\\s*\\((?:MCQ|SUBJECTIVE|CODING|BEHAVIORAL)\\)\\s*", "")
+                    .replaceFirst("^\\s*\\[(?:EASY|MEDIUM|HARD)\\]\\s*", "")
+                    .replaceFirst("^\\s*[^:\\n]{3,50}:\\s+", "")
+                    .trim();
+        }
 
         // Try to persist question to the user's most recent active session (if any)
         Long savedQuestionId = null;

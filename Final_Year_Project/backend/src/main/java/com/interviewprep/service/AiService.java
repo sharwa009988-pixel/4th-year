@@ -165,7 +165,7 @@ public class AiService {
                             PromptTemplates.evaluateAnswerPrompt(questionType, topicContext, question, userAnswer))
             );
 
-            String response = sendGrokWithRetries(messages, Map.of("model", "grok-beta"));
+            String response = sendGrokWithRetries(messages, Map.of("model", "grok-beta", "response_format", "json_object"));
             if (response != null && !response.isBlank() && !response.startsWith("ERROR_QUOTA_EXCEEDED:")) {
                 log.debug("Evaluated answer via Grok for role: {}, question type: {}", role, questionType);
                 return cleanJsonResponse(response);
@@ -188,7 +188,7 @@ public class AiService {
                             PromptTemplates.generateCodingProblemPrompt(topic, difficulty))
             );
 
-            String response = sendGrokWithRetries(messages, Map.of("model", "grok-beta"));
+            String response = sendGrokWithRetries(messages, Map.of("model", "grok-beta", "response_format", "json_object"));
             if (response != null && !response.isBlank() && !response.startsWith("ERROR_QUOTA_EXCEEDED:")) {
                 log.debug("Generated coding problem via Grok for role: {}, topic: {}", role, topic);
                 return response.trim();
@@ -294,6 +294,12 @@ public class AiService {
                 mutable.put("temperature", temp);
             } catch (NumberFormatException ignored) {
             }
+        }
+        String respFmt = options.get("response_format");
+        if (respFmt != null && !respFmt.isBlank()) {
+            java.util.Map<String, Object> rf = new java.util.HashMap<>();
+            rf.put("type", respFmt);
+            mutable.put("response_format", rf);
         }
 
         payload = mutable;
