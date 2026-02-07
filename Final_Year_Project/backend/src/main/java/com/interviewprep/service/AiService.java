@@ -76,6 +76,7 @@ public class AiService {
                 if ("MCQ".equalsIgnoreCase(questionType)) {
                     text = sanitizeMcqQuestion(text);
                 }
+                text = sanitizeQuestionTags(text);
                 return text;
             } else {
                 log.warn("Grok returned empty or quota exceeded for generateQuestion");
@@ -399,12 +400,47 @@ public class AiService {
      */
     private String cleanJsonResponse(String response) {
         if (response == null) return "{}";
-
         String cleaned = response.trim();
         if (cleaned.startsWith("```json")) cleaned = cleaned.substring(7);
         if (cleaned.startsWith("```")) cleaned = cleaned.substring(3);
         if (cleaned.endsWith("```")) cleaned = cleaned.substring(0, cleaned.length() - 3);
-        return cleaned.trim();
+        cleaned = cleaned.trim();
+        try {
+            // Try direct parse
+            mapper.readTree(cleaned);
+            return cleaned;
+        } catch (Exception ignored) {
+            // Try to extract first JSON object from mixed content
+            String extracted = extractFirstJsonObject(cleaned);
+            if (extracted != null) return extracted;
+            return "{}";
+        }
+    }
+
+    /**
+     * Attempt to extract the first balanced JSON object from a string.
+     */
+    private String extractFirstJsonObject(String s) {
+        int start = -1;
+        int depth = 0;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '{') {
+                if (start < 0) start = i;
+                depth++;
+            } else if (c == '}') {
+                if (depth > 0) depth--;
+                if (depth == 0 && start >= 0) {
+                    String candidate = s.substring(start, i + 1);
+                    try {
+                        mapper.readTree(candidate);
+                        return candidate;
+                    } catch (Exception ignored) {}
+                    start = -1;
+                }
+            }
+        }
+        return null;
     }
 
     /**
@@ -440,6 +476,18 @@ public class AiService {
         }
         log.warn("HttpClient request to Grok returned status {}", resp.statusCode());
         return null;
+    }
+
+    private String sanitizeQuestionTags(String text) {
+        if (text == null) return null;
+        String t = text.trim();
+        // Remove leading (MCQ)/(SUBJECTIVE)/(CODING)/(BEHAVIORAL)
+        t = t.replaceFirst("^\\s*\\((?:MCQ|SUBJECTIVE|CODING|BEHAVIORAL)\\)\\s*", "");
+        // Remove leading [EASY]/[MEDIUM]/[HARD]
+        t = t.replaceFirst("^\\s*\\[(?:EASY|MEDIUM|HARD)\\]\\s*", "");
+        // Remove leading Role: prefix (e.g., "Java Full Stack Developer: ")
+        t = t.replaceFirst("^\\s*[^:\\n]{3,50}:\\s+", "");
+        return t.trim();
     }
 
     // --- Local evaluation fallbacks ---
