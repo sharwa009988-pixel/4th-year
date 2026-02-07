@@ -57,15 +57,13 @@ public class DashboardService {
 
         Map<String, List<String>> sw = new HashMap<>();
         List<String> strengths = sessions.stream()
-                .filter(s -> s.getTotalScore() != null && s.getTotalScore() >= 7.0)
-                .map(InterviewSession::getTopic)
-                .filter(Objects::nonNull)
+                .filter(s -> s.getTotalScore() != null && s.getTotalScore() >= 6.5)
+                .map(s -> (s.getTopic() == null || s.getTopic().isBlank()) ? "General" : s.getTopic())
                 .distinct()
                 .collect(Collectors.toList());
         List<String> weaknesses = sessions.stream()
-                .filter(s -> s.getTotalScore() != null && s.getTotalScore() < 5.0)
-                .map(InterviewSession::getTopic)
-                .filter(Objects::nonNull)
+                .filter(s -> s.getTotalScore() != null && s.getTotalScore() < 6.5)
+                .map(s -> (s.getTopic() == null || s.getTopic().isBlank()) ? "General" : s.getTopic())
                 .distinct()
                 .collect(Collectors.toList());
         sw.put("strengths", strengths);
