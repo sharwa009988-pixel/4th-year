@@ -28,14 +28,14 @@ const AI_KEY = process.env.GROKX_API_KEY || process.env.GROK_API_KEY || process.
 const AI_MODEL = process.env.GROKX_MODEL || process.env.GROK_MODEL || 'grok-2';
 const AI_BASE_URL = process.env.GROKX_API_BASE_URL || 'https://api.x.ai/v1/chat/completions';
 
-async function grokChat(system, user, temperature = 0.7) {
-  if (!AI_KEY) return null;
+async function grokChat(system, user, temperature = 0.7, apiKey = AI_KEY) {
+  if (!apiKey) return null;
   try {
     const resp = await fetchFn(AI_BASE_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${AI_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: AI_MODEL,
@@ -55,14 +55,14 @@ async function grokChat(system, user, temperature = 0.7) {
   }
 }
 
-async function grokChatJson(system, user, temperature = 0.2) {
-  if (!AI_KEY) return null;
+async function grokChatJson(system, user, temperature = 0.2, apiKey = AI_KEY) {
+  if (!apiKey) return null;
   try {
     const resp = await fetchFn(AI_BASE_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${AI_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: AI_MODEL,
@@ -83,14 +83,14 @@ async function grokChatJson(system, user, temperature = 0.2) {
   }
 }
 
-async function grokJson(system, user, schemaHint = '', temperature = 0.2) {
-  const first = await grokChatJson(system, user, temperature);
+async function grokJson(system, user, schemaHint = '', temperature = 0.2, apiKey = AI_KEY) {
+  const first = await grokChatJson(system, user, temperature, apiKey);
   let parsed = parseJsonSafe(first);
   if (parsed && typeof parsed === 'object') return parsed;
   const sys2 = schemaHint
     ? `${system} Ensure output matches this schema strictly: ${schemaHint}. Return ONLY JSON.`
     : `${system} Return ONLY JSON. Do not include any prose.`;
-  const second = await grokChatJson(sys2, user, temperature);
+  const second = await grokChatJson(sys2, user, temperature, apiKey);
   parsed = parseJsonSafe(second);
   if (parsed && typeof parsed === 'object') return parsed;
   return null;
@@ -365,7 +365,9 @@ app.post('/api/interview/evaluate', (req, res) => {
   const saved = getUserFromAuth(req);
   if (!saved) return res.status(401).json({ message: 'Unauthorized' });
   const { userAnswer, questionText, mode, topic, difficulty } = req.body || {};
-  if (AI_KEY) {
+  const headerKey = req.headers['x-api-key'] || req.headers['x-xai-key'] || null;
+  const key = headerKey || AI_KEY;
+  if (key) {
     const m = (mode && mode.trim()) ? mode.trim().toUpperCase() : 'SUBJECTIVE';
     if (m === 'MCQ') {
       const key = typeof req.body.questionId === 'number' ? req.body.questionId : null;
@@ -419,7 +421,7 @@ app.post('/api/interview/evaluate', (req, res) => {
       const schema = `{"feedback":{"candidateAnswer":string,"isCorrect":boolean,"correctAnswer":string,"score":number,"explanation":string,"mistakes":string,"example":string},"newQuestion":{"question":string,"type":string,"difficulty":string}}`;
       const sysE = 'Return ONLY JSON per schema. First judge if the candidateAnswer is correct for the question; then provide a concise 3-5 line correctAnswer; then explanation; mistake analysis; concise example.';
       const promptE = `Role: ${saved.role || ''}\nType: SUBJECTIVE\nDifficulty: ${(difficulty||'MEDIUM')}\nQuestion:\n${questionText}\nCandidate Answer:\n${userAnswer}\nEvaluate and respond per schema strictly.`;
-      grokJson(sysE, promptE, schema, 0.2).then(parsed => {
+      grokJson(sysE, promptE, schema, 0.2, key).then(parsed => {
         if (parsed && parsed.feedback && parsed.newQuestion) {
           res.json(parsed);
         } else {
@@ -431,17 +433,28 @@ app.post('/api/interview/evaluate', (req, res) => {
           const sysJudge = 'Return ONLY "Correct" or "Incorrect". Decide if the candidate answer sufficiently answers the question.';
           const promptJudge = `Question:\n${questionText}\nCandidate Answer:\n${userAnswer}`;
           Promise.all([
-            grokChat(sysCA, promptCA, 0.2),
-            grokChat(sysJudge, promptJudge, 0.2)
+            grokChat(sysCA, promptCA, 0.4, key),
+            grokChat(sysJudge, promptJudge, 0.2, key)
           ]).then(([ca, judge]) => {
             const caText = String(ca || '').replace(/\\n/g,'\n').trim();
             const jText = String(judge || '').trim().toLowerCase();
             const isCorrect = jText.startsWith('correct');
+            let finalCA = caText;
+            if (!finalCA || finalCA.length < 40) {
+              const sysCA2 = 'Return ONLY plain text. Provide a detailed, accurate correct answer (6-10 sentences) with concrete steps/examples for the question.';
+              const promptCA2 = `Question:\n${questionText}\nRole: ${saved.role || ''}`;
+              return grokChat(sysCA2, promptCA2, 0.5, key).then(ca2 => {
+                finalCA = String(ca2 || '').replace(/\\n/g,'\n').trim() || finalCA;
+                return { finalCA, isCorrect };
+              }).catch(() => ({ finalCA, isCorrect }));
+            }
+            return { finalCA, isCorrect };
+          }).then(({ finalCA, isCorrect }) => {
             res.json({
               feedback: {
                 candidateAnswer: ans,
                 isCorrect,
-                correctAnswer: caText || 'A concise role-appropriate answer covering core concepts.',
+                correctAnswer: finalCA || 'A concise role-appropriate answer covering core concepts.',
                 score,
                 explanation: 'Provide role-specific fundamentals and justify choices.',
                 mistakes: hasContent ? 'Missing specifics and trade-offs.' : 'Answer too brief; lacks key points.',
@@ -481,17 +494,18 @@ app.post('/api/interview/evaluate', (req, res) => {
         const sysJudge = 'Return ONLY "Correct" or "Incorrect". Decide if the candidate answer sufficiently answers the question.';
         const promptJudge = `Question:\n${questionText}\nCandidate Answer:\n${userAnswer}`;
         Promise.all([
-          grokChat(sysCA, promptCA, 0.2),
-          grokChat(sysJudge, promptJudge, 0.2)
+          grokChat(sysCA, promptCA, 0.4, key),
+          grokChat(sysJudge, promptJudge, 0.2, key)
         ]).then(([ca, judge]) => {
           const caText = String(ca || '').replace(/\\n/g,'\n').trim();
           const jText = String(judge || '').trim().toLowerCase();
           const isCorrect = jText.startsWith('correct');
-          res.json({
+          let finalCA = caText;
+          const finish = () => res.json({
             feedback: {
               candidateAnswer: ans,
               isCorrect,
-              correctAnswer: caText || 'A concise role-appropriate answer covering core concepts.',
+              correctAnswer: finalCA || 'A concise role-appropriate answer covering core concepts.',
               score,
               explanation: 'Provide role-specific fundamentals and justify choices.',
               mistakes: hasContent ? 'Missing specifics and trade-offs.' : 'Answer too brief; lacks key points.',
@@ -503,6 +517,16 @@ app.post('/api/interview/evaluate', (req, res) => {
               difficulty: (difficulty||'MEDIUM')
             }
           });
+          if (!finalCA || finalCA.length < 40) {
+            const sysCA2 = 'Return ONLY plain text. Provide a detailed, accurate correct answer (6-10 sentences) with concrete steps/examples for the question.';
+            const promptCA2 = `Question:\n${questionText}\nRole: ${saved.role || ''}`;
+            grokChat(sysCA2, promptCA2, 0.5, key).then(ca2 => {
+              finalCA = String(ca2 || '').replace(/\\n/g,'\n').trim() || finalCA;
+              finish();
+            }).catch(finish);
+          } else {
+            finish();
+          }
         }).catch(() => {
           res.json({
             feedback: {
