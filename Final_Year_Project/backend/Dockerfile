@@ -14,4 +14,5 @@ ENV JAVA_OPTS="-Xms256m -Xmx512m"
 COPY --from=build /app/target/java-fullstack-interview-prep-1.0.0.jar app.jar
 # Render injects PORT; Spring Boot is configured to use ${PORT}
 EXPOSE 10000
-CMD ["bash", "-lc", "java $JAVA_OPTS -jar app.jar"]
+ENTRYPOINT ["java"]
+CMD ["-jar", "app.jar"]
