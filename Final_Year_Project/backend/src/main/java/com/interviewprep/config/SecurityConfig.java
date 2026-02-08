@@ -31,10 +31,10 @@ public class SecurityConfig {
             .csrf(csrf -> csrf.disable())
             .cors(cors -> { })
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/auth/**").permitAll()
-                .requestMatchers("/actuator/health").permitAll()
+                .requestMatchers("/api/auth/**").permitAll()
+                .requestMatchers("/api/actuator/health").permitAll()
                 // Temporary: allow internal debug endpoints during local development
-                .requestMatchers("/debug/**").permitAll()
+                .requestMatchers("/api/debug/**").permitAll()
                 .anyRequest().authenticated()
             )
             .sessionManagement(session -> session
