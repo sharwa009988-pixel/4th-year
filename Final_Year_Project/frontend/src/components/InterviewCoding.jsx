@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import Editor from '@monaco-editor/react';
-import { interviewApi, codeApi } from '../api/client';
+import { examApi, codeApi } from '../api/client';
 
 const DEFAULT_JAVA = `public class Main {
     public static void main(String[] args) {
@@ -26,8 +26,13 @@ export default function InterviewCoding({ sessionId, onEnd, onBack }) {
     setNewProb(null);
     setLoadingProblem(true);
     try {
-      const res = await interviewApi.generateCodingProblem(null);
-      setProblem(res.problem || '');
+      const res = await examApi.examine(
+        'coding',
+        'Generate one Java programming task with clear statement and include input/output examples.'
+      );
+      const first = Array.isArray(res.questions) ? (res.questions[0] || {}) : {};
+      const text = first.text || '';
+      setProblem(String(text));
     } catch (e) {
       setError(e.message || 'Failed to generate problem');
     } finally {
@@ -59,9 +64,14 @@ export default function InterviewCoding({ sessionId, onEnd, onBack }) {
     setError('');
     setLoadingEval(true);
     try {
-      const res = await interviewApi.evaluateCode(code, problem, output, sessionId);
-      setFb(res.feedback || null);
-      setNewProb(res.newProblem || null);
+      const res = await examApi.examine(
+        'coding',
+        `Evaluate the candidate code for the problem. Consider algorithm correctness, complexity, and edge cases.\nProblem:\n${problem}\nOutput:\n${output || ''}`,
+        code
+      );
+      const ev = res.evaluation || null;
+      setFb(ev || null);
+      setNewProb(res.refined || null);
     } catch (e) {
       setError(e.message || 'Failed to get feedback');
     } finally {

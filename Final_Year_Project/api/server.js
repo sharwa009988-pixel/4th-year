@@ -24,73 +24,68 @@ try {
 const sessions = [];
 let questionSeq = 1;
 const mcqCorrect = new Map();
-const AI_KEY = process.env.GROKX_API_KEY || process.env.GROK_API_KEY || process.env.X_API_KEY || process.env.XAI_API_KEY || '';
-const AI_MODEL = process.env.GROKX_MODEL || process.env.GROK_MODEL || 'grok-2';
-const AI_BASE_URL = process.env.GROKX_API_BASE_URL || 'https://api.x.ai/v1/chat/completions';
+const AI_KEY = process.env.GEMINI_API_KEY || '';
+const AI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+const AI_BASE_URL = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com';
 
-async function grokChat(system, user, temperature = 0.7, apiKey = AI_KEY) {
+async function geminiText(system, user, temperature = 0.7, apiKey = AI_KEY) {
   if (!apiKey) return null;
   try {
-    const resp = await fetchFn(AI_BASE_URL, {
+    const url = `${AI_BASE_URL.replace(/\/+$/,'')}/v1beta/models/${AI_MODEL}:generateContent?key=${apiKey}`;
+    const resp = await fetchFn(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: AI_MODEL,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user },
-        ],
-        temperature,
+        generationConfig: { temperature },
+        contents: [
+          { role: 'user', parts: [{ text: `${system}\n\n${user}` }] }
+        ]
       }),
     });
     if (!resp.ok) return null;
     const data = await resp.json();
-    const content = data?.choices?.[0]?.message?.content || '';
-    return typeof content === 'string' ? content.trim() : '';
+    const text = data?.candidates?.[0]?.content?.parts?.map(p => p?.text).filter(Boolean).join('\n') || '';
+    return typeof text === 'string' ? text.trim() : '';
   } catch (e) {
     return null;
   }
 }
 
-async function grokChatJson(system, user, temperature = 0.2, apiKey = AI_KEY) {
+async function geminiJson(system, user, temperature = 0.2, apiKey = AI_KEY) {
   if (!apiKey) return null;
   try {
-    const resp = await fetchFn(AI_BASE_URL, {
+    const url = `${AI_BASE_URL.replace(/\/+$/,'')}/v1beta/models/${AI_MODEL}:generateContent?key=${apiKey}`;
+    const resp = await fetchFn(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: AI_MODEL,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user },
-        ],
-        temperature,
-        response_format: { type: 'json_object' }
+        generationConfig: { temperature, response_mime_type: 'application/json' },
+        contents: [
+          { role: 'user', parts: [{ text: `${system}\n\n${user}` }] }
+        ]
       }),
     });
     if (!resp.ok) return null;
     const data = await resp.json();
-    const content = data?.choices?.[0]?.message?.content || '';
-    return typeof content === 'string' ? content.trim() : '';
+    const text = data?.candidates?.[0]?.content?.parts?.map(p => p?.text).filter(Boolean).join('\n') || '';
+    return typeof text === 'string' ? text.trim() : '';
   } catch {
     return null;
   }
 }
 
-async function grokJson(system, user, schemaHint = '', temperature = 0.2, apiKey = AI_KEY) {
-  const first = await grokChatJson(system, user, temperature, apiKey);
+async function geminiEnsureJson(system, user, schemaHint = '', temperature = 0.2, apiKey = AI_KEY) {
+  const first = await geminiJson(system, user, temperature, apiKey);
   let parsed = parseJsonSafe(first);
   if (parsed && typeof parsed === 'object') return parsed;
   const sys2 = schemaHint
     ? `${system} Ensure output matches this schema strictly: ${schemaHint}. Return ONLY JSON.`
     : `${system} Return ONLY JSON. Do not include any prose.`;
-  const second = await grokChatJson(sys2, user, temperature, apiKey);
+  const second = await geminiJson(sys2, user, temperature, apiKey);
   parsed = parseJsonSafe(second);
   if (parsed && typeof parsed === 'object') return parsed;
   return null;
@@ -316,7 +311,7 @@ app.post('/api/interview/question/generate', (req, res) => {
   const promptQ = `Seed: ${id}\nMode: ${m}\nRole: ${saved.role || baseTopic}\nTopic: ${baseTopic}\nDifficulty: ${diff}\nGenerate exactly one question.\nFor MCQ: first line is the question stem, then four lines with options A) to D). Do not include the answer.`;
   if (AI_KEY) {
     questionText = null;
-    grokChat(sysQ, promptQ).then(content => {
+    geminiText(sysQ, promptQ).then(content => {
       if (content && typeof content === 'string' && content.trim().length > 0) {
         const txt = content.replace(/\\n/g, '\n').trim();
         res.json({ questionId: id, question: txt });
@@ -375,13 +370,13 @@ app.post('/api/interview/evaluate', (req, res) => {
       const schema = `{"feedback":{"candidateAnswer":string,"correctAnswer":string,"score":number,"explanation":string,"mistakes":string,"example":string},"newQuestion":{"question":string,"type":string,"difficulty":string}}`;
       const sysE = 'Return ONLY JSON per schema. Use provided correct option letter as ground truth and give interview-grade explanation and mistake analysis. Keep explanations 3-5 lines.';
       const promptE = `Role: ${saved.role || ''}\nType: MCQ\nDifficulty: ${(difficulty||'MEDIUM')}\nQuestion:\n${questionText}\nCorrect Option Letter: ${correct || 'UNKNOWN'}\nCandidate Option Letter: ${String(userAnswer||'').trim().toUpperCase()}\nExplain technically why the correct option is right and the candidate choice is wrong if applicable. Provide a short example.`;
-      grokJson(sysE, promptE, schema, 0.2).then(parsed => {
+      geminiEnsureJson(sysE, promptE, schema, 0.2).then(parsed => {
         if (parsed && parsed.feedback && parsed.newQuestion) {
           res.json(parsed);
         } else {
           const sysExp = 'Explain briefly (3-5 lines) why the provided MCQ correct option is right and the candidate choice is wrong.';
           const promptExp = `Question:\n${questionText}\nCorrect: ${correct || 'UNKNOWN'}\nCandidate: ${String(userAnswer||'').trim().toUpperCase()}`;
-          grokChat(sysExp, promptExp, 0.2).then(exp => {
+          geminiText(sysExp, promptExp, 0.2).then(exp => {
             const explanation = (exp && typeof exp === 'string') ? exp.replace(/\\n/g,'\n').trim() : '';
             res.json({
               feedback: {
@@ -421,7 +416,7 @@ app.post('/api/interview/evaluate', (req, res) => {
       const schema = `{"feedback":{"candidateAnswer":string,"isCorrect":boolean,"correctAnswer":string,"score":number,"explanation":string,"mistakes":string,"example":string},"newQuestion":{"question":string,"type":string,"difficulty":string}}`;
       const sysE = 'Return ONLY JSON per schema. First judge if the candidateAnswer is correct for the question; then provide a concise 3-5 line correctAnswer; then explanation; mistake analysis; concise example.';
       const promptE = `Role: ${saved.role || ''}\nType: SUBJECTIVE\nDifficulty: ${(difficulty||'MEDIUM')}\nQuestion:\n${questionText}\nCandidate Answer:\n${userAnswer}\nEvaluate and respond per schema strictly.`;
-      grokJson(sysE, promptE, schema, 0.2, key).then(parsed => {
+      geminiEnsureJson(sysE, promptE, schema, 0.2, key).then(parsed => {
         if (parsed && parsed.feedback && parsed.newQuestion) {
           res.json(parsed);
         } else {
@@ -433,8 +428,8 @@ app.post('/api/interview/evaluate', (req, res) => {
           const sysJudge = 'Return ONLY "Correct" or "Incorrect". Decide if the candidate answer sufficiently answers the question.';
           const promptJudge = `Question:\n${questionText}\nCandidate Answer:\n${userAnswer}`;
           Promise.all([
-            grokChat(sysCA, promptCA, 0.4, key),
-            grokChat(sysJudge, promptJudge, 0.2, key)
+            geminiText(sysCA, promptCA, 0.4, key),
+            geminiText(sysJudge, promptJudge, 0.2, key)
           ]).then(([ca, judge]) => {
             const caText = String(ca || '').replace(/\\n/g,'\n').trim();
             const jText = String(judge || '').trim().toLowerCase();
@@ -443,7 +438,7 @@ app.post('/api/interview/evaluate', (req, res) => {
             if (!finalCA || finalCA.length < 40) {
               const sysCA2 = 'Return ONLY plain text. Provide a detailed, accurate correct answer (6-10 sentences) with concrete steps/examples for the question.';
               const promptCA2 = `Question:\n${questionText}\nRole: ${saved.role || ''}`;
-              return grokChat(sysCA2, promptCA2, 0.5, key).then(ca2 => {
+              return geminiText(sysCA2, promptCA2, 0.5, key).then(ca2 => {
                 finalCA = String(ca2 || '').replace(/\\n/g,'\n').trim() || finalCA;
                 return { finalCA, isCorrect };
               }).catch(() => ({ finalCA, isCorrect }));
@@ -453,7 +448,7 @@ app.post('/api/interview/evaluate', (req, res) => {
             if (!isCorrect) {
               const sysJudge2 = 'Return ONLY "Correct" or "Incorrect". Using the ideal answer as reference, decide if the candidate sufficiently covers the core points.';
               const promptJudge2 = `Ideal Answer:\n${finalCA}\n\nCandidate Answer:\n${userAnswer}`;
-              const j2 = await grokChat(sysJudge2, promptJudge2, 0.2, key);
+              const j2 = await geminiText(sysJudge2, promptJudge2, 0.2, key);
               const j2Text = String(j2 || '').trim().toLowerCase();
               if (j2Text.startsWith('correct')) isCorrect = true;
             }
@@ -503,8 +498,8 @@ app.post('/api/interview/evaluate', (req, res) => {
         const sysJudge = 'Return ONLY "Correct" or "Incorrect". Decide if the candidate answer sufficiently answers the question.';
         const promptJudge = `Question:\n${questionText}\nCandidate Answer:\n${userAnswer}`;
         Promise.all([
-          grokChat(sysCA, promptCA, 0.4, key),
-          grokChat(sysJudge, promptJudge, 0.2, key)
+          geminiText(sysCA, promptCA, 0.4, key),
+          geminiText(sysJudge, promptJudge, 0.2, key)
         ]).then(([ca, judge]) => {
           const caText = String(ca || '').replace(/\\n/g,'\n').trim();
           const jText = String(judge || '').trim().toLowerCase();
@@ -529,12 +524,12 @@ app.post('/api/interview/evaluate', (req, res) => {
           if (!finalCA || finalCA.length < 40) {
             const sysCA2 = 'Return ONLY plain text. Provide a detailed, accurate correct answer (6-10 sentences) with concrete steps/examples for the question.';
             const promptCA2 = `Question:\n${questionText}\nRole: ${saved.role || ''}`;
-            grokChat(sysCA2, promptCA2, 0.5, key).then(ca2 => {
+            geminiText(sysCA2, promptCA2, 0.5, key).then(ca2 => {
               finalCA = String(ca2 || '').replace(/\\n/g,'\n').trim() || finalCA;
               if (!isCorrectVar) {
                 const sysJudge2 = 'Return ONLY "Correct" or "Incorrect". Using the ideal answer as reference, decide if the candidate sufficiently covers the core points.';
                 const promptJudge2 = `Ideal Answer:\n${finalCA}\n\nCandidate Answer:\n${userAnswer}`;
-                grokChat(sysJudge2, promptJudge2, 0.2, key).then(j2 => {
+                geminiText(sysJudge2, promptJudge2, 0.2, key).then(j2 => {
                   const j2Text = String(j2 || '').trim().toLowerCase();
                   if (j2Text.startsWith('correct')) isCorrectVar = true;
                   finish();
@@ -547,7 +542,7 @@ app.post('/api/interview/evaluate', (req, res) => {
             if (!isCorrectVar) {
               const sysJudge2 = 'Return ONLY "Correct" or "Incorrect". Using the ideal answer as reference, decide if the candidate sufficiently covers the core points.';
               const promptJudge2 = `Ideal Answer:\n${finalCA}\n\nCandidate Answer:\n${userAnswer}`;
-              grokChat(sysJudge2, promptJudge2, 0.2, key).then(j2 => {
+              geminiText(sysJudge2, promptJudge2, 0.2, key).then(j2 => {
                 const j2Text = String(j2 || '').trim().toLowerCase();
                 if (j2Text.startsWith('correct')) isCorrectVar = true;
                 finish();

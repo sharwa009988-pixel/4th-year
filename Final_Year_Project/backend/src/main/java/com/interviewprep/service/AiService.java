@@ -11,9 +11,6 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -22,7 +19,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.ArrayList;
 
 /**
- * AI Service using Grok (xAI) via direct HTTP calls. This replaces Spring AI ChatClient usage
+ * AI Service using Google Gemini via direct HTTP calls. This replaces previous Grok/HuggingFace usage
  * which can be misconfigured for local deployments. The implementation is resilient
  * to multiple provider response shapes and uses a short timeout to avoid blocking the UI.
  */
@@ -34,25 +31,17 @@ public class AiService {
     private final WebClient webClient;
 
     /** Timeout in seconds for each provider call; after this we return quickly so UI doesn't hang. */
-    @Value("${app.grok.timeout-seconds:10}")
-    private int grokTimeoutSeconds;
+    @Value("${app.gemini.timeout-seconds:10}")
+    private int geminiTimeoutSeconds;
 
-    /** Number of attempts to call Grok before giving up */
-    @Value("${app.grok.max-retries:2}")
-    private int grokMaxRetries;
+    /** Number of attempts to call Gemini before giving up */
+    @Value("${app.gemini.max-retries:2}")
+    private int geminiMaxRetries;
 
-    @Value("${spring.ai.grok.base-url:https://api.x.ai}")
-    private String grokBaseUrl;
-    @Value("${app.ai.provider:AUTODETECT}")
-    private String aiProvider;
-    @Value("${app.hf.api-token:}")
-    private String hfApiToken;
-    @Value("${app.hf.model.question:google/flan-t5-large}")
-    private String hfQuestionModel;
-    @Value("${app.hf.model.eval:mistralai/Mistral-7B-Instruct-v0.2}")
-    private String hfEvalModel;
-    @Value("${app.hf.model.code:bigcode/starcoder}")
-    private String hfCodeModel;
+    @Value("${app.gemini.base-url:https://generativelanguage.googleapis.com}")
+    private String geminiBaseUrl;
+    @Value("${app.gemini.model:gemini-1.5-flash}")
+    private String geminiModel;
     
     public AiService(WebClient.Builder webClientBuilder) {
         this.webClient = webClientBuilder.build();
@@ -71,22 +60,11 @@ public class AiService {
             String userPrompt = PromptTemplates.generateQuestionPrompt(questionType, interviewType, topic, difficulty)
                 + "\n\nPlease generate a different/new question than previous ones. RandomSeed: " + seed;
 
-            List<Map<String, String>> messages = List.of(
-                Map.of("role", "system", "content", systemPrompt),
-                Map.of("role", "user", "content", userPrompt)
-            );
-
             // Add a randomized temperature to encourage diversity from the LLM provider
             double temperature = 0.7 + ThreadLocalRandom.current().nextDouble() * 0.2; // 0.7 - 0.9
-            String response;
-            if (shouldUseHf()) {
-                response = callHf(hfQuestionModel, systemPrompt + "\n\n" + userPrompt, temperature, false);
-            } else {
-                Map<String, String> options = Map.of("model", "grok-beta", "temperature", String.valueOf(temperature));
-                response = sendGrokWithRetries(messages, options);
-            }
+            String response = sendGeminiWithRetries(systemPrompt, userPrompt, temperature, false);
             if (response != null && !response.isBlank() && !response.startsWith("ERROR_QUOTA_EXCEEDED:")) {
-                log.debug("Generated question via Grok/HF for role: {}, topic: {}, type: {}", role, topic, questionType);
+                log.debug("Generated question via Gemini for role: {}, topic: {}, type: {}", role, topic, questionType);
                 String text = response.trim();
                 if ("MCQ".equalsIgnoreCase(questionType)) {
                     text = sanitizeMcqQuestion(text);
@@ -178,20 +156,10 @@ public class AiService {
                                  String topicContext) {
         try {
             String systemPrompt = PromptTemplates.buildSystemPrompt(role);
-            List<Map<String, String>> messages = List.of(
-                    Map.of("role", "system", "content", systemPrompt),
-                    Map.of("role", "user", "content",
-                            PromptTemplates.evaluateAnswerPrompt(questionType, topicContext, question, userAnswer))
-            );
-
-            String response;
-            if (shouldUseHf()) {
-                response = callHf(hfEvalModel, systemPrompt + "\n\n" + PromptTemplates.evaluateAnswerPrompt(questionType, topicContext, question, userAnswer), 0.2, true);
-            } else {
-                response = sendGrokWithRetries(messages, Map.of("model", "grok-beta", "response_format", "json_object"));
-            }
+            String userPrompt = PromptTemplates.evaluateAnswerPrompt(questionType, topicContext, question, userAnswer);
+            String response = sendGeminiWithRetries(systemPrompt, userPrompt, 0.2, true);
             if (response != null && !response.isBlank() && !response.startsWith("ERROR_QUOTA_EXCEEDED:")) {
-                log.debug("Evaluated answer via provider for role: {}, question type: {}", role, questionType);
+                log.debug("Evaluated answer via Gemini for role: {}, question type: {}", role, questionType);
                 String cleaned = cleanJsonResponse(response);
                 if (hasEvalFields(cleaned)) {
                     return cleaned;
@@ -211,27 +179,17 @@ public class AiService {
     public String generateCodingProblem(String role, String topic, String difficulty) {
         try {
             String systemPrompt = PromptTemplates.buildSystemPrompt(role);
-            List<Map<String, String>> messages = List.of(
-                    Map.of("role", "system", "content", systemPrompt),
-                    Map.of("role", "user", "content",
-                            PromptTemplates.generateCodingProblemPrompt(topic, difficulty))
-            );
-
-            String response;
-            if (shouldUseHf()) {
-                response = callHf(hfQuestionModel, systemPrompt + "\n\n" + PromptTemplates.generateCodingProblemPrompt(topic, difficulty), 0.3, false);
-            } else {
-                response = sendGrokWithRetries(messages, Map.of("model", "grok-beta", "response_format", "json_object"));
-            }
+            String userPrompt = PromptTemplates.generateCodingProblemPrompt(topic, difficulty);
+            String response = sendGeminiWithRetries(systemPrompt, userPrompt, 0.3, false);
             if (response != null && !response.isBlank() && !response.startsWith("ERROR_QUOTA_EXCEEDED:")) {
-                log.debug("Generated coding problem via Grok for role: {}, topic: {}", role, topic);
+                log.debug("Generated coding problem via Gemini for role: {}, topic: {}", role, topic);
                 return response.trim();
             }
-            // If Grok returned empty, fall back to local generator so the UI remains usable
-            log.warn("Grok returned empty or quota exceeded for generateCodingProblem");
+            // If provider returned empty, fall back to local generator so the UI remains usable
+            log.warn("Gemini returned empty or quota exceeded for generateCodingProblem");
             return generateFallbackQuestion(role, topic, difficulty, "CODING", "INTERVIEW");
         } catch (Exception e) {
-            log.warn("Grok coding problem generation failed: {}. Using fallback.", e.getMessage());
+            log.warn("Gemini coding problem generation failed: {}. Using fallback.", e.getMessage());
             return generateFallbackQuestion(role, topic, difficulty, "CODING", "INTERVIEW");
         }
     }
@@ -243,20 +201,10 @@ public class AiService {
                                          String hiddenTestsDescription) {
         try {
             String systemPrompt = PromptTemplates.buildSystemPrompt(role);
-            List<Map<String, String>> messages = List.of(
-                    Map.of("role", "system", "content", systemPrompt),
-                    Map.of("role", "user", "content",
-                            PromptTemplates.evaluateCodingSolutionPrompt(problem, code, output, hiddenTestsDescription))
-            );
-
-            String response;
-            if (shouldUseHf()) {
-                response = callHf(hfCodeModel, systemPrompt + "\n\n" + PromptTemplates.evaluateCodingSolutionPrompt(problem, code, output, hiddenTestsDescription), 0.2, true);
-            } else {
-                response = sendGrokWithRetries(messages, Map.of("model", "grok-beta"));
-            }
+            String userPrompt = PromptTemplates.evaluateCodingSolutionPrompt(problem, code, output, hiddenTestsDescription);
+            String response = sendGeminiWithRetries(systemPrompt, userPrompt, 0.2, true);
             if (response != null && !response.isBlank() && !response.startsWith("ERROR_QUOTA_EXCEEDED:")) {
-                log.debug("Evaluated coding solution via provider for role: {}", role);
+                log.debug("Evaluated coding solution via Gemini for role: {}", role);
                 String cleaned = cleanJsonResponse(response);
                 if (hasEvalFields(cleaned)) {
                     return cleaned;
@@ -274,20 +222,18 @@ public class AiService {
     }
 
     /**
-    * Send messages to the Grok endpoint with retries/backoff and return the assistant content when available.
+    * Send prompts to the Gemini endpoint with retries/backoff and return the content when available.
      */
-    private String sendGrokWithRetries(List<Map<String, String>> messages, Map<String, String> options) {
+    private String sendGeminiWithRetries(String systemPrompt, String userPrompt, double temperature, boolean wantJson) {
         int attempt = 0;
         String lastError = null;
 
-        while (attempt < Math.max(1, grokMaxRetries)) {
+        while (attempt < Math.max(1, geminiMaxRetries)) {
             attempt++;
             try {
-                log.debug("Calling Grok (attempt {}/{}) with timeout {}s", attempt, grokMaxRetries, grokTimeoutSeconds);
-                // Ensure options include model; send options through so temperature and others are honored
-                String result = sendGrokRequest(messages, options);
-                
-                // If result is a special error indicator from sendGrokRequest, return it or handle it
+                log.debug("Calling Gemini (attempt {}/{}) with timeout {}s", attempt, geminiMaxRetries, geminiTimeoutSeconds);
+                String result = sendGeminiRequest(systemPrompt, userPrompt, temperature, wantJson);
+                // If result is a special error indicator from sendGeminiRequest, return it or handle it
                 if (result != null && result.startsWith("ERROR_QUOTA_EXCEEDED:")) {
                      return result;
                 }
@@ -295,14 +241,14 @@ public class AiService {
                 if (result != null) return result;
             } catch (Exception e) {
                 lastError = e.getMessage();
-                log.warn("Grok call failed on attempt {}/{}: {}", attempt, grokMaxRetries, e.getMessage());
+                log.warn("Gemini call failed on attempt {}/{}: {}", attempt, geminiMaxRetries, e.getMessage());
                 // If 403 or quota error, stop retrying immediately
-                if (e.getMessage().contains("403") || e.getMessage().contains("Quota") || e.getMessage().contains("credits")) {
-                     return "ERROR_QUOTA_EXCEEDED: Your xAI API key has no credits/licenses. Please verify billing at console.x.ai.";
+                if (e.getMessage().contains("403") || e.getMessage().contains("quota") || e.getMessage().toLowerCase().contains("api key")) {
+                     return "ERROR_QUOTA_EXCEEDED: Your Gemini API key has issues (quota/invalid). Check Google AI Studio.";
                 }
             }
 
-            if (attempt < grokMaxRetries) {
+            if (attempt < geminiMaxRetries) {
                 try {
                     Thread.sleep(500L * attempt);
                 } catch (InterruptedException ie) {
@@ -311,137 +257,89 @@ public class AiService {
                 }
             }
         }
-        log.warn("All {} Grok attempts failed/timeout. Last error: {}", grokMaxRetries, lastError);
+        log.warn("All {} Gemini attempts failed/timeout. Last error: {}", geminiMaxRetries, lastError);
         return null;
     }
 
     /**
-    * Perform the actual HTTP request to the Grok API endpoint and parse the response.
-    * This method tolerates multiple response shapes used by different providers.
+    * Perform the actual HTTP request to the Gemini API endpoint and parse the response.
      */
     @SuppressWarnings("unchecked")
-    private String sendGrokRequest(List<Map<String, String>> messages, Map<String, String> options) throws IOException {
-        String model = options.getOrDefault("model", "grok-beta");
-
-        Map<String, Object> payload = Map.of(
-                "model", model,
-                "messages", messages,
-                "stream", false
-        );
-
-        // If a temperature option is provided, build a mutable map to include it
-        java.util.Map<String, Object> mutable = new java.util.HashMap<>(payload);
-        String tempStr = options.get("temperature");
-        if (tempStr != null) {
-            try {
-                double temp = Double.parseDouble(tempStr);
-                mutable.put("temperature", temp);
-            } catch (NumberFormatException ignored) {
-            }
+    private String sendGeminiRequest(String systemPrompt, String userPrompt, double temperature, boolean wantJson) throws IOException {
+        String apiKey = System.getenv("GEMINI_API_KEY");
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new RuntimeException("Missing GEMINI_API_KEY");
         }
-        String respFmt = options.get("response_format");
-        if (respFmt != null && !respFmt.isBlank()) {
-            java.util.Map<String, Object> rf = new java.util.HashMap<>();
-            rf.put("type", respFmt);
-            mutable.put("response_format", rf);
+        String endpoint = geminiBaseUrl.replaceAll("/+$", "")
+                + "/v1beta/models/" + geminiModel + ":generateContent?key=" + apiKey;
+        String combinedPrompt = (systemPrompt == null || systemPrompt.isBlank())
+                ? userPrompt
+                : systemPrompt + "\n\n" + userPrompt;
+
+        java.util.Map<String, Object> generationConfig = new java.util.HashMap<>();
+        generationConfig.put("temperature", temperature);
+        if (wantJson) {
+            generationConfig.put("response_mime_type", "application/json");
         }
 
-        payload = mutable;
+        java.util.Map<String, Object> payload = new java.util.HashMap<>();
+        payload.put("generationConfig", generationConfig);
+        java.util.Map<String, Object> requestContent = new java.util.HashMap<>();
+        requestContent.put("role", "user");
+        requestContent.put("parts", List.of(Map.of("text", combinedPrompt)));
+        payload.put("contents", List.of(requestContent));
 
         String respBody = null;
         try {
                 WebClient.RequestBodySpec req = webClient.post()
-                    .uri(URI.create(grokBaseUrl.replaceAll("/+$", "") + "/v1/chat/completions"))
+                    .uri(URI.create(endpoint))
                     .contentType(MediaType.APPLICATION_JSON);
-
-                // Add Authorization header from environment if available
-                String apiKey = System.getenv("X_API_KEY");
-                if (apiKey == null || apiKey.isBlank()) {
-                    apiKey = System.getenv("GROK_API_KEY");
-                }
-                
-                if (apiKey != null && !apiKey.isBlank()) {
-                    String finalKey = apiKey;
-                    req = req.headers(h -> h.setBearerAuth(finalKey));
-                }
 
                 respBody = req.bodyValue(payload)
                     .retrieve()
                     .onStatus(status -> status.value() == 403 || status.value() == 401, response -> {
-                        return response.bodyToMono(String.class).flatMap(body -> {
-                            log.error("Grok Auth Error {}: {}", response.statusCode(), body);
+                        return response.bodyToMono(String.class).flatMap(respText -> {
+                            log.error("Gemini Auth Error {}: {}", response.statusCode(), respText);
                             return reactor.core.publisher.Mono.error(new RuntimeException("Quota Exceeded or Invalid Key (403/401)"));
                         });
                     })
                     .bodyToMono(String.class)
-                    .block(Duration.ofSeconds(Math.max(1, grokTimeoutSeconds)));
+                    .block(Duration.ofSeconds(Math.max(1, geminiTimeoutSeconds)));
         } catch (Exception we) {
-            log.warn("WebClient call to Grok failed: {}", we.getMessage());
-            
-            // If it's the quota error, throw it up so the retry loop catches it and returns the special message
-            if (we.getMessage().contains("Quota") || we.getMessage().contains("403")) {
-                throw we;
-            }
-
-            // try a direct HttpClient as a secondary attempt in case WebClient is misbehaving
-            try {
-                respBody = tryHttpClientRequest(payload);
-                log.debug("Grok response via HttpClient fallback: {}", respBody == null ? "<null>" : "(body len=" + respBody.length() + ")");
-            } catch (Exception he) {
-                log.warn("HttpClient fallback to Grok failed: {}", he.getMessage());
-                if (he.getMessage().contains("403") || he.getMessage().contains("Quota")) {
-                     throw new RuntimeException("Quota Exceeded (403)");
-                }
-            }
+            log.warn("WebClient call to Gemini failed: {}", we.getMessage());
+            throw we;
         }
 
         if (respBody == null) {
-            log.warn("Grok returned empty body");
+            log.warn("Gemini returned empty body");
             return null;
         }
 
-        // Check if body contains error structure even with 200 OK (unlikely but possible)
-        if (respBody.contains("\"error\"") && respBody.contains("\"code\"")) {
-             log.warn("Grok returned error in body: {}", respBody);
-             return null;
-        }
-
-        log.debug("Grok response body: {}", respBody);
+        log.debug("Gemini response body: {}", respBody);
 
         Map<String, Object> map = mapper.readValue(respBody, new TypeReference<>() {});
 
-        // Handle OpenAI-compatible response format (standard for xAI now)
-        Object choicesObj = map.get("choices");
-        if (choicesObj instanceof List choices && !choices.isEmpty()) {
-            Object first = choices.get(0);
+        // Gemini v1beta format: candidates[0].content.parts[*].text
+        Object candidatesObj = map.get("candidates");
+        if (candidatesObj instanceof List candidates && !candidates.isEmpty()) {
+            Object first = candidates.get(0);
             if (first instanceof Map firstMap) {
-                Object msg = firstMap.get("message");
-                if (msg instanceof Map msgMap) {
-                    Object content = msgMap.get("content");
-                    if (content != null) return String.valueOf(content);
+                Object contentObj = firstMap.get("content");
+                if (contentObj instanceof Map contentMap) {
+                    Object parts = contentMap.get("parts");
+                    if (parts instanceof List partsList && !partsList.isEmpty()) {
+                        for (Object p : partsList) {
+                            if (p instanceof Map pm) {
+                                Object text = pm.get("text");
+                                if (text != null) return String.valueOf(text);
+                            }
+                        }
+                    }
                 }
-                // Fallback for some non-standard responses
-                Object direct = firstMap.get("content");
-                if (direct != null) return String.valueOf(direct);
-                Object text = firstMap.get("text");
-                if (text != null) return String.valueOf(text);
             }
         }
-        
-        // Fallback for legacy/other formats
-        Object out = map.get("output");
-        if (out instanceof String s) return s;
-        Object text = map.get("text");
-        if (text instanceof String ts) return ts;
 
-        Object messageObj = map.get("message");
-        if (messageObj instanceof Map messageMap) {
-            Object content = messageMap.get("content");
-            if (content != null) return String.valueOf(content);
-        }
-
-        // No recognized content found
-        log.warn("Grok response did not contain a recognized message content: {}", respBody);
+        log.warn("Gemini response did not contain recognized text content: {}", respBody);
         return null;
     }
 
@@ -507,41 +405,6 @@ public class AiService {
         return null;
     }
 
-    /**
-    * Secondary HTTP client fallback for calling Grok when WebClient fails.
-     */
-    private String tryHttpClientRequest(Map<String, Object> payload) throws IOException, InterruptedException {
-        HttpClient client = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(Math.max(1, grokTimeoutSeconds)))
-            .build();
-
-        String json = mapper.writeValueAsString(payload);
-        HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
-                .uri(URI.create(grokBaseUrl.replaceAll("/+$", "") + "/v1/chat/completions"))
-                .timeout(Duration.ofSeconds(Math.max(1, grokTimeoutSeconds)))
-                .header("Content-Type", "application/json")
-                ;
-
-        // Add Authorization header if present
-        String apiKey = System.getenv("X_API_KEY");
-        if (apiKey == null || apiKey.isBlank()) {
-            apiKey = System.getenv("GROK_API_KEY");
-        }
-        
-        if (apiKey != null && !apiKey.isBlank()) {
-            reqBuilder.header("Authorization", "Bearer " + apiKey);
-        }
-
-        HttpRequest req = reqBuilder.POST(HttpRequest.BodyPublishers.ofString(json)).build();
-
-        HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
-        if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
-            return resp.body();
-        }
-        log.warn("HttpClient request to Grok returned status {}", resp.statusCode());
-        return null;
-    }
-
     private String sanitizeQuestionTags(String text) {
         if (text == null) return null;
         String t = text.trim();
@@ -552,64 +415,6 @@ public class AiService {
         // Remove leading Role: prefix (e.g., "Java Full Stack Developer: ")
         t = t.replaceFirst("^\\s*[^:\\n]{3,50}:\\s+", "");
         return t.trim();
-    }
-
-    private boolean shouldUseHf() {
-        String envProvider = System.getenv("AI_PROVIDER");
-        String provider = aiProvider != null ? aiProvider : "AUTODETECT";
-        String resolved = envProvider != null && !envProvider.isBlank() ? envProvider : provider;
-        String token = System.getenv("HF_API_TOKEN");
-        if (token == null || token.isBlank()) token = hfApiToken;
-        return "HF".equalsIgnoreCase(resolved) || (token != null && !token.isBlank());
-    }
-
-    private String callHf(String model, String prompt, double temperature, boolean wantJson) {
-        try {
-            String tokenEnv = System.getenv("HF_API_TOKEN");
-            String resolvedToken = (tokenEnv == null || tokenEnv.isBlank()) ? hfApiToken : tokenEnv;
-            if (resolvedToken == null || resolvedToken.isBlank()) return null;
-            final String bearerToken = resolvedToken;
-            String url = "https://api-inference.huggingface.co/models/" + model;
-            java.util.Map<String, Object> body = new java.util.HashMap<>();
-            body.put("inputs", prompt);
-            java.util.Map<String, Object> params = new java.util.HashMap<>();
-            params.put("max_new_tokens", 400);
-            params.put("temperature", temperature);
-            params.put("do_sample", temperature > 0.0);
-            params.put("return_full_text", false);
-            body.put("parameters", params);
-            String resp = webClient.post()
-                    .uri(URI.create(url))
-                    .headers(h -> h.setBearerAuth(bearerToken))
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(body)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block(Duration.ofSeconds(Math.max(1, grokTimeoutSeconds)));
-            if (resp == null || resp.isBlank()) return null;
-            Object parsed = mapper.readValue(resp, Object.class);
-            String text = null;
-            if (parsed instanceof java.util.List l && !l.isEmpty()) {
-                Object first = l.get(0);
-                if (first instanceof java.util.Map fm) {
-                    Object gt = fm.get("generated_text");
-                    if (gt != null) text = String.valueOf(gt);
-                } else if (first instanceof String s) {
-                    text = s;
-                }
-            } else if (parsed instanceof java.util.Map m) {
-                Object gt = m.get("generated_text");
-                if (gt != null) text = String.valueOf(gt);
-            } else if (parsed instanceof String s) {
-                text = s;
-            }
-            if (text == null) text = resp;
-            if (wantJson) return cleanJsonResponse(text);
-            return text;
-        } catch (Exception e) {
-            log.warn("HF call failed: {}", e.getMessage());
-            return null;
-        }
     }
 
     // --- Local evaluation fallbacks ---
@@ -788,5 +593,15 @@ public class AiService {
     private String escapeJson(String s) {
         if (s == null) return "";
         return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n");
+    }
+
+    public String callGeminiJson(String systemPrompt, String userPrompt, double temperature) {
+        String resp = sendGeminiWithRetries(systemPrompt, userPrompt, temperature, true);
+        return cleanJsonResponse(resp);
+    }
+
+    public String callGeminiText(String systemPrompt, String userPrompt, double temperature) {
+        String resp = sendGeminiWithRetries(systemPrompt, userPrompt, temperature, false);
+        return resp == null ? "" : resp.trim();
     }
 }

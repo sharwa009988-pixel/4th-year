@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { interviewApi } from '../api/client';
+import { examApi } from '../api/client';
 
 export default function InterviewSubjective({ sessionId, mode, topic, difficulty, onEnd, onBack }) {
   const [question, setQuestion] = useState('');
@@ -44,13 +44,25 @@ export default function InterviewSubjective({ sessionId, mode, topic, difficulty
     setSelectedOption('');
     setLoadingQuestion(true);
     try {
-      const res = await interviewApi.generateQuestion(mode, topic, difficulty);
-      let q = String(res.question || '');
+      const res = await examApi.examine(
+        String(mode).toLowerCase(),
+        `Generate one ${mode} question for topic "${topic || ''}" with difficulty "${difficulty || 'MEDIUM'}". Ensure MCQ has 4 options A-D and one correct.`
+      );
+      const first = Array.isArray(res.questions) ? (res.questions[0] || {}) : {};
+      let q = '';
+      if (first.stem) {
+        const opts = Array.isArray(first.options) ? first.options.map(o => `${o.key}) ${o.text}`).join('\n') : '';
+        q = `${first.stem}${opts ? '\n' + opts : ''}`;
+      } else if (first.text) {
+        q = String(first.text || '');
+      } else {
+        q = String((res.questions && res.questions[0]) || '');
+      }
       q = q.replace(/^\\s*\\((?:MCQ|SUBJECTIVE|CODING|BEHAVIORAL)\\)\\s*/i, '');
       q = q.replace(/^\\s*\\[(?:EASY|MEDIUM|HARD)\\]\\s*/i, '');
       q = q.replace(/^\\s*[^:\\n]{3,50}:\\s+/i, '');
       setQuestion(q);
-      setQuestionId(res.questionId || null);
+      setQuestionId(first.id || null);
     } catch (e) {
       setError(e.message || 'Failed to generate question');
     } finally {
@@ -66,8 +78,13 @@ export default function InterviewSubjective({ sessionId, mode, topic, difficulty
     setError('');
     setLoadingEval(true);
     try {
-      const res = await interviewApi.evaluate(questionId, question, userAnswer, sessionId, mode, topic, difficulty);
-      setFb(res.feedback || null);
+      const res = await examApi.examine(
+        String(mode).toLowerCase(),
+        `Evaluate the candidate answer for this ${mode} question.\nQuestion:\n${question}\nTopic:${topic || ''}\nDifficulty:${difficulty || 'MEDIUM'}`,
+        userAnswer
+      );
+      const ev = res.evaluation || null;
+      setFb(ev || null);
       setSuggested(null);
     } catch (e) {
       setError(e.message || 'Failed to evaluate');

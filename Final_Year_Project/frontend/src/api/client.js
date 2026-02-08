@@ -24,11 +24,6 @@ axiosApi.interceptors.request.use((config) => {
       config.headers = config.headers || {};
       config.headers.Authorization = `Bearer ${token}`;
     }
-    const xaiKey = typeof window !== 'undefined' ? localStorage.getItem('xaiKey') : null;
-    if (xaiKey) {
-      config.headers = config.headers || {};
-      config.headers['X-Api-Key'] = xaiKey;
-    }
   } catch {}
   return config;
 });
@@ -77,6 +72,15 @@ export async function api(method, path, body = null) {
 
   return handleRes(axiosApi.request(config));
 }
+
+export const examApi = {
+  examine: (page_type, user_prompt, user_answer = null) =>
+    api("POST", "/exam", {
+      page_type,
+      user_prompt,
+      user_answer,
+    }),
+};
 
 /* =============================
    AUTH APIs

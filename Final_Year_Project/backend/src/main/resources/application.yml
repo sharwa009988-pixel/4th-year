@@ -20,21 +20,7 @@ spring:
     properties:
       hibernate:
         format_sql: true
-
-  ai:
-    grok:
-      base-url: ${GROK_BASE_URL:https://api.grok.x.ai}
-      endpoint: ${GROK_ENDPOINT:/v1/generate}
-      model: ${GROK_MODEL:grokxai}
-      chat:
-        temperature: ${GROK_TEMPERATURE:0.7}
-    # OpenAI (optional fallback - comment out for local-only)
-    # openai:
-    #   api-key: ${OPENAI_API_KEY:your-key-here}
-    #   chat:
-    #     options:
-    #       model: gpt-4o-mini
-    #       temperature: 0.7
+ 
 # JWT Configuration
 jwt:
   secret: ${JWT_SECRET:}
@@ -51,11 +37,13 @@ cors:
   allowed-origins: http://localhost:5173,http://localhost:3000
   allowed-origin-patterns: https://*.vercel.app
 
-# App: Grok call timeout (seconds). If Grok is down/slow, fallback is used after this.
+# App: Gemini call settings
 app:
-  grok:
-    timeout-seconds: 5
-    max-retries: 1
+  gemini:
+    timeout-seconds: ${GEMINI_TIMEOUT_SECONDS:10}
+    max-retries: ${GEMINI_MAX_RETRIES:2}
+    base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com}
+    model: ${GEMINI_MODEL:gemini-1.5-flash}
 
 # Logging
 logging:
