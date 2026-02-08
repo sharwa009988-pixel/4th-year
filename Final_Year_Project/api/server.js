@@ -201,11 +201,13 @@ app.get('/api/dashboard/stats', (req, res) => {
   const saved = getUserFromAuth(req);
   if (!saved) return res.status(401).json({ message: 'Unauthorized' });
   const mySessions = sessions.filter(x => x.userId === saved.id);
+  const scored = mySessions.filter(s => typeof s.score === 'number');
+  const avg = scored.length ? (scored.reduce((a, s) => a + (s.score || 0), 0) / scored.length) : 0;
   const stats = {
     targetRole: saved.role || '',
     totalSessions: mySessions.length,
     sessionsThisRole: mySessions.length,
-    averageScore: 0,
+    averageScore: Math.round(avg * 10) / 10,
     recentTopics: Array.from(new Set(mySessions.slice(-10).map(s => s.topic || ''))).filter(Boolean),
     strengthsWeaknesses: {
       strengths: [],
@@ -218,6 +220,89 @@ app.get('/api/dashboard/stats', (req, res) => {
 
 app.get('/api/public/health', (req, res) => {
   res.json({ status: 'ok' });
+});
+
+app.post('/api/exam', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const pageType = String(body.page_type || 'subjective').trim().toLowerCase();
+    const userPrompt = String(body.user_prompt || '').trim();
+    const userAnswer = String(body.user_answer || '').trim();
+    const base = 'You are a senior technical interviewer. Return ONLY JSON per schema. Keep outputs recruiter-ready, clear, and concise.';
+    const schema = '{"questions":[{"type":"string","text":"string","options":[{"key":"string","text":"string"}],"answer":"string","examples":[{"input":"string","output":"string"}]}],"evaluation":{"score":"number","feedback":"string","is_correct":"boolean","correct_answer":"string","explanation":"string"},"refined":"string"}';
+    let typeSpec = '';
+    if (pageType === 'mcq') typeSpec = 'For MCQ: each question has exactly 4 options A-D; include the correct answer letter in "answer".';
+    else if (pageType === 'coding') typeSpec = 'For coding: include input/output examples per question in "examples".';
+    else if (pageType === 'fullmock') typeSpec = 'Full Mock: generate a balanced mix — include some subjective, some MCQ, and at least one coding task.';
+    else typeSpec = 'Subjective: generate open-ended, analytical questions.';
+    const system = `${base} Schema: ${schema} ${typeSpec}`;
+    let header = `Page Type: ${pageType.toUpperCase()}\nInstructions: ${userPrompt}`;
+    let evalPart = '';
+    if (userAnswer) {
+      evalPart = `\nCandidate Submission:\n${userAnswer}\nEvaluate the submission and fill "evaluation".`;
+      if (pageType === 'coding') evalPart += ' Focus evaluation on algorithm correctness, complexity, and edge-cases.';
+      if (pageType === 'mcq') evalPart += ' Compare candidate option with correct "answer".';
+    }
+    const requestText = `${header}\nGenerate "questions" and if submission present, produce "evaluation". Provide a "refined" improved version when applicable.${evalPart}`;
+    const temp = pageType === 'mcq' ? 0.3 : (pageType === 'coding' ? 0.2 : 0.5);
+    let parsed = await geminiEnsureJson(system, requestText, schema, temp, AI_KEY);
+    if (!parsed || typeof parsed !== 'object' || !parsed.questions || !Array.isArray(parsed.questions) || parsed.questions.length === 0) {
+      const fallback = { questions: [], evaluation: { score: 0, feedback: 'Evaluation unavailable. Using local fallback content.', is_correct: false, correct_answer: '', explanation: '' }, refined: '' };
+      if (pageType === 'mcq') {
+        fallback.questions.push({
+          text: 'Which HTTP method is idempotent by definition?',
+          options: [{ key: 'A', text: 'POST' }, { key: 'B', text: 'PUT' }, { key: 'C', text: 'PATCH' }, { key: 'D', text: 'CONNECT' }],
+          answer: 'B'
+        });
+      } else if (pageType === 'coding') {
+        fallback.questions.push({
+          text: 'Write a function that reverses a string.',
+          examples: [{ input: 'hello', output: 'olleh' }, { input: 'abc', output: 'cba' }]
+        });
+      } else if (pageType === 'fullmock') {
+        fallback.questions.push({ text: 'Describe ACID properties and their importance.' });
+      } else {
+        fallback.questions.push({ text: 'Explain SOLID principles with practical Java examples.' });
+      }
+      // Record a completion if user provided answer and is authenticated
+      const saved = getUserFromAuth(req);
+      if (userAnswer && saved) {
+        const id = Date.now();
+        sessions.push({
+          id,
+          userId: saved.id,
+          mode: pageType.toUpperCase(),
+          topic: '',
+          difficulty: 'MEDIUM',
+          startedAt: new Date().toISOString(),
+          endedAt: new Date().toISOString(),
+          score: 0,
+          totalQuestions: 1
+        });
+      }
+      return res.json(fallback);
+    }
+    // Record a completion if user provided answer and is authenticated
+    const saved = getUserFromAuth(req);
+    if (userAnswer && saved) {
+      const id = Date.now();
+      const score = (parsed && parsed.evaluation && typeof parsed.evaluation.score === 'number') ? parsed.evaluation.score : 0;
+      sessions.push({
+        id,
+        userId: saved.id,
+        mode: pageType.toUpperCase(),
+        topic: '',
+        difficulty: 'MEDIUM',
+        startedAt: new Date().toISOString(),
+        endedAt: new Date().toISOString(),
+        score: score,
+        totalQuestions: Array.isArray(parsed.questions) ? parsed.questions.length : 1
+      });
+    }
+    return res.json(parsed);
+  } catch (e) {
+    res.status(500).json({ message: 'Exam endpoint error', error: String(e.message || e) });
+  }
 });
 
 // ---------- Interview endpoints ----------
@@ -632,7 +717,7 @@ app.post('/api/interview/coding/problem', (req, res) => {
     const baseSys = 'Return ONLY plain text for a single Java coding problem suitable for backend engineers. Include constraints and 2-3 sample test cases briefly. Do NOT repeat any problem listed.';
     const listed = Array.from(seen).slice(-10).join('\n- ');
     const promptC = `Role: ${topic}\nSeed: ${Date.now()}\nPreviously used problems:\n- ${listed || '(none)'}\nGenerate one new problem. No solution. Keep concise and practical.`;
-    grokChat(baseSys, promptC, 0.2).then(content => {
+    geminiText(baseSys, promptC, 0.2, AI_KEY).then(content => {
       let text = (content || '').trim();
       let norm = normalize(text);
       let tries = 0;
@@ -671,7 +756,7 @@ app.post('/api/interview/coding/problem', (req, res) => {
         tries++;
         const sys2 = 'Return ONLY plain text for a different Java coding problem than the one provided. Include constraints and 2-3 sample tests.';
         const prompt2 = `Role: ${topic}\nAvoid repeating:\n${text}\nSeed: ${Date.now()}`;
-        grokChat(sys2, prompt2, 0.2).then(c2 => {
+        geminiText(sys2, prompt2, 0.2, AI_KEY).then(c2 => {
           text = (c2 || '').trim();
           norm = normalize(text);
           if (!text || seen.has(norm)) {
@@ -729,7 +814,7 @@ app.post('/api/interview/evaluate-code', (req, res) => {
   if (AI_KEY) {
     const sysEC = 'Return ONLY JSON. Schema: {"feedback":{"candidateCode":string,"score":number,"explanation":string,"algorithmAnalysis":string,"improvementSuggestions":string},"newProblem":{"title":string,"description":string,"difficulty":string,"topics":string[]}}. Use technical reasoning and include time/space complexity and edge cases.';
     const promptEC = `Role: Java Backend Developer\nProblem: ${problemStatement}\nCandidate Code:\n${code}\nProgram output:\n${executionOutput || ''}\nEvaluate correctness; provide analysis and suggestions; then generate a new backend-aligned problem. Output strictly matching the schema.`;
-    grokChat(sysEC, promptEC, 0.2).then(content => {
+    geminiJson(sysEC, promptEC, 0.2, AI_KEY).then(content => {
       let parsed = parseJsonSafe(content);
       if (!parsed || typeof parsed !== 'object') parsed = null;
       if (parsed && parsed.feedback && parsed.newProblem) {
